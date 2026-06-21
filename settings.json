@@ -1,0 +1,31 @@
+{
+    "server": {
+        "name": "OldChat Rhodium Neo",
+        "version": "1.0.0",
+        "url": "https://github.com/LGCR837/oldchat-rhodium-neo"
+    },
+    "announcement": {
+        "title": "服务器公告",
+        "body": "这是 OldChat-Rhodium-Neo 项目，一个用 Python 实现的第三方旧聊兼容服务器。仓库：https://github.com/LGCR837/oldchat-rhodium-neo",
+        "enabled": true
+    },
+    "auto_join_group": {
+        "enabled": true,
+        "group_id": "",
+        "group_name": "大厅",
+        "auto_create": true,
+        "welcome_message": "欢迎加入默认大厅！这是服务器自动创建的公共交流群。"
+    },
+    "features": {
+        "encrypted_login": true,
+        "direct_messages": true,
+        "group_chat": true,
+        "friends": true,
+        "moments": true,
+        "media_upload": true
+    },
+    "limits": {
+        "max_upload_mb": 20,
+        "max_message_length": 2000
+    }
+}

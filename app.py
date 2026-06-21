@@ -58,6 +58,64 @@ app.secret_key = secrets.token_hex(32)
 DEBUG_REQ = os.environ.get("DEBUG_REQ", "0") == "1"
 IS_WINDOWS = sys.platform.startswith("win")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("oldchat")
+
+# ---------- Settings ----------
+def _load_settings(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        log.info("[settings] 已加载: %s", path)
+        return data
+    except FileNotFoundError:
+        log.warning("[settings] %s 未找到，使用默认配置", path)
+    except Exception as e:
+        log.warning("[settings] 加载失败: %s，使用默认配置", e)
+    return {
+        "server": {"name": "OldChat", "version": "1.0.0", "url": ""},
+        "announcement": {"title": "服务器公告", "body": "这是 OldChat 兼容服务器。", "enabled": True},
+        "auto_join_group": {"enabled": True, "group_id": "", "group_name": "大厅", "auto_create": True, "welcome_message": "欢迎加入默认大厅！"},
+        "features": {},
+        "limits": {"max_upload_mb": 20, "max_message_length": 2000},
+    }
+
+SETTINGS_PATH = os.environ.get(
+    "SETTINGS_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+)
+SETTINGS = _load_settings(SETTINGS_PATH)
+
+def _ensure_default_group():
+    cfg = SETTINGS.get("auto_join_group", {}) or {}
+    if not cfg.get("enabled"):
+        return None
+    gid = (cfg.get("group_id") or "").strip()
+    name = cfg.get("group_name") or "大厅"
+    if gid:
+        existing = db_query_one("SELECT group_id FROM groups WHERE group_id = ?", (gid,))
+        if existing:
+            return gid
+        db_execute(
+            "INSERT INTO groups (group_id, name, avatar_url, owner_id, created_at) VALUES (?, ?, '', 0, ?)",
+            (gid, name, now_ts()),
+        )
+        return gid
+    if cfg.get("auto_create"):
+        existing = db_query_one("SELECT group_id FROM groups WHERE name = ?", (name,))
+        if existing:
+            return existing["group_id"]
+        gid = gen_group_id()
+        db_execute(
+            "INSERT INTO groups (group_id, name, avatar_url, owner_id, created_at) VALUES (?, ?, '', 0, ?)",
+            (gid, name, now_ts()),
+        )
+        return gid
+    return None
+
 # Windows 下 eventlet 有一些兼容性问题（WSAEventSelect / greenlet 初始化等）
 # 如果在 Windows 上 monkey_patch 没能把 socket 真正绿化，就安全降级为 threading + 明文模式
 if IS_WINDOWS and HAS_EVENTLET:
@@ -70,12 +128,6 @@ if IS_WINDOWS and HAS_EVENTLET:
     except Exception as _e:
         log.warning("[Windows] eventlet 自检失败(%s)，降级为 threading 模式", _e)
         HAS_EVENTLET = False
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-log = logging.getLogger("oldchat")
 
 # --- Crypto Helpers -------------------------------------------------------
 
@@ -588,6 +640,23 @@ def auth_register():
     if g.current_session_id:
         db_execute("UPDATE sessions SET user_id = ? WHERE session_id = ?",
                    (row["id"], g.current_session_id))
+    # Auto-join default group (for new users only)
+    default_gid = _ensure_default_group()
+    if default_gid:
+        try:
+            db_execute(
+                "INSERT OR IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
+                (default_gid, row["id"], now_ts()),
+            )
+            # 可选：在群里发一条系统欢迎消息
+            welcome = (SETTINGS.get("auto_join_group", {}) or {}).get("welcome_message", "")
+            if welcome:
+                db_execute(
+                    "INSERT INTO group_messages (group_id, from_id, body, msg_type, created_at) VALUES (?, 0, ?, 'system', ?)",
+                    (default_gid, welcome, now_ts()),
+                )
+        except Exception as _e:
+            log.warning("[register] auto-join default group failed: %s", _e)
     access_token, refresh_token = issue_tokens(row["id"])
     return jsonify({
         "access_token": access_token,
@@ -729,14 +798,28 @@ def friends_list():
     return jsonify({"friends": [user_to_dict(r) for r in rows]})
 
 @app.route("/v1/friends/request", methods=["POST"])
+@app.route("/v1/friends/add", methods=["POST"])
+@app.route("/v1/users/add", methods=["POST"])
 def friends_request():
     _auth = require_auth()
     if _auth: return _auth
     body = req_json()
-    to_uid = (body.get("to_uid") or "").strip().upper()
+    # 兼容多种参数命名
+    to_uid = (
+        body.get("to_uid") or body.get("uid") or body.get("friend_uid") or
+        body.get("target_uid") or body.get("user_id") or body.get("username") or ""
+    )
+    to_uid = str(to_uid).strip().upper()
+    if DEBUG_REQ:
+        log.info("friends_request: to_uid=%s body_keys=%s", to_uid, list(body.keys())[:10])
     if not to_uid:
         return jsonify({"code": 400, "msg": "missing to_uid"}), 400
     target = db_query_one("SELECT id, uid, display_name FROM users WHERE uid = ?", (to_uid,))
+    if not target:
+        # fallback: search by username
+        target = db_query_one(
+            "SELECT id, uid, display_name FROM users WHERE username = ?", (str(body.get("username") or body.get("to_uid") or ""),)
+        )
     if not target:
         return jsonify({"code": 404, "msg": "user not found"}), 404
     target_id = target["id"]
@@ -747,6 +830,8 @@ def friends_request():
         (g.current_user_id, target_id, target_id, g.current_user_id),
     )
     if existing:
+        if existing["status"] == "accepted":
+            return jsonify({"request_id": str(existing["id"]), "message": "already friends"})
         return jsonify({"request_id": str(existing["id"]), "message": "request pending or already friends"})
     rid = db_execute(
         "INSERT INTO friendships (user_id, friend_id, status, initiated_by, created_at) VALUES (?, ?, 'pending', ?, ?)",
@@ -754,12 +839,15 @@ def friends_request():
     )
     # Add notification for target
     me_row = db_query_one("SELECT uid, display_name FROM users WHERE id = ?", (g.current_user_id,))
-    db_execute(
-        "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'friend_request', ?, ?, ?, ?, 0)",
-        (target_id, "好友请求", "%s 请求加你为好友" % (me_row["display_name"] or me_row["uid"]),
-         json.dumps({"from_uid": me_row["uid"] if me_row else "", "request_id": str(rid)}), now_ts()),
-    )
-    return jsonify({"request_id": str(rid), "message": "request sent"})
+    try:
+        db_execute(
+            "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'friend_request', ?, ?, ?, ?, 0)",
+            (target_id, "好友请求", "%s 请求加你为好友" % (me_row["display_name"] or me_row["uid"]),
+             json.dumps({"from_uid": me_row["uid"] if me_row else "", "request_id": str(rid)}), now_ts()),
+        )
+    except Exception:
+        pass
+    return jsonify({"request_id": str(rid), "message": "request sent", "to_uid": target["uid"]})
 
 @app.route("/v1/friends/requests", methods=["GET"])
 def friends_requests():
@@ -1322,12 +1410,28 @@ def chats_typing_get(uid):
 def notifications_get():
     _auth = require_auth()
     if _auth: return _auth
-    limit = min(int(request.args.get("limit", 100)), 200)
+    limit = max(1, min(int(request.args.get("limit", 20)), 200))
+    # 先返回系统公告（从 settings.json），再返回用户个人通知
+    notifs = []
+    ann = SETTINGS.get("announcement", {}) or {}
+    if ann.get("enabled"):
+        server_info = SETTINGS.get("server", {}) or {}
+        notifs.append({
+            "id": "sys-announcement",
+            "type": "announcement",
+            "title": ann.get("title") or server_info.get("name") or "服务器公告",
+            "body": ann.get("body") or "",
+            "server_name": server_info.get("name"),
+            "server_url": server_info.get("url"),
+            "version": server_info.get("version"),
+            "created_at": int(os.path.getmtime(SETTINGS_PATH)) if os.path.exists(SETTINGS_PATH) else now_ts(),
+            "is_read": 1,
+        })
+    # 用户个人通知
     rows = db_query_all(
         "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
         (g.current_user_id, limit),
     )
-    notifs = []
     for r in rows:
         n = {
             "id": str(r["id"]),
@@ -1344,7 +1448,7 @@ def notifications_get():
             except Exception:
                 pass
         notifs.append(n)
-    return jsonify({"notifications": notifs})
+    return jsonify({"notifications": notifs, "total": len(notifs)})
 
 @app.route("/v1/notifications/read", methods=["POST"])
 def notifications_read():
