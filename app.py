@@ -17,6 +17,7 @@ import json
 import time
 import secrets
 import hashlib
+import hmac
 import base64
 import sqlite3
 import logging
@@ -84,7 +85,8 @@ def encrypt_body(aes_key: bytes, mac_key: bytes, plaintext: bytes) -> dict:
     padded = plaintext + bytes([pad_len]) * pad_len
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
     ct = cipher.encryptor().update(padded) + cipher.encryptor().finalize()
-    mac_v = hashlib.sha256(mac_key + iv + ct).digest()
+    # HMAC-SHA256(mac_key, iv || ciphertext) — 与 Android 客户端完全一致
+    mac_v = hmac.new(mac_key, iv + ct, hashlib.sha256).digest()
     return {
         "iv": base64.b64encode(iv).decode("ascii"),
         "data": base64.b64encode(ct).decode("ascii"),
@@ -95,8 +97,9 @@ def decrypt_body(aes_key: bytes, mac_key: bytes, enc_dict: dict) -> bytes:
     iv = base64.b64decode(enc_dict["iv"])
     ct = base64.b64decode(enc_dict["data"])
     mac_expected = base64.b64decode(enc_dict["mac"])
-    mac_actual = hashlib.sha256(mac_key + iv + ct).digest()
-    if mac_actual != mac_expected:
+    # HMAC-SHA256(mac_key, iv || ciphertext)
+    mac_actual = hmac.new(mac_key, iv + ct, hashlib.sha256).digest()
+    if not hmac.compare_digest(mac_actual, mac_expected):
         raise ValueError("MAC mismatch")
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
     plain = cipher.decryptor().update(ct) + cipher.decryptor().finalize()
