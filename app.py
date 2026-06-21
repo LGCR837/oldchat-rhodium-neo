@@ -14,8 +14,15 @@ import threading
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, request, jsonify, g, send_from_directory
+from flask import Flask, request, jsonify, g, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
+
+# 尝试导入PIL用于生成验证码图片
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 # ============ ECDH 加密相关 / ECDH Encryption ============
 try:
@@ -286,6 +293,37 @@ def get_timestamp():
 def get_milliseconds():
     """获取当前时间戳(毫秒)"""
     return int(time.time() * 1000)
+
+def generate_captcha_image():
+    """生成验证码图片，返回12345"""
+    if not HAS_PIL:
+        # 如果没有PIL，返回一个简单的SVG
+        svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40">
+        <rect fill="#f0f0f0" width="100" height="40"/>
+        <text x="10" y="30" font-family="Arial" font-size="24" fill="#333">12345</text>
+        </svg>'''
+        return f"data:image/svg+xml;base64,{svg.encode('utf-8').decode('latin1')}"
+    
+    # 创建图片
+    img = Image.new('RGB', (100, 40), color='#f0f0f0')
+    draw = ImageDraw.Draw(img)
+    
+    # 绘制12345
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+    except:
+        font = ImageFont.load_default()
+    
+    draw.text((10, 5), "12345", fill='#333333', font=font)
+    
+    # 保存到内存
+    import io
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    
+    import base64
+    return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('latin1')}"
 
 def success_response(data=None, message="success"):
     """成功响应"""
@@ -1568,12 +1606,38 @@ def v1_auth_login():
 @app.route('/v1/auth/captcha', methods=['GET'])
 def v1_auth_captcha():
     """获取验证码 - V1版本"""
-    # 返回一个简单的占位验证码
+    captcha_id = f"captcha_{int(time.time())}"
+    captcha_image = generate_captcha_image()
     return jsonify({
         "code": 0,
         "data": {
-            "captcha_id": f"captcha_{int(time.time())}",
-            "captcha_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            "captcha_id": captcha_id,
+            "captcha_image": captcha_image
+        }
+    })
+
+@app.route('/v1/auth/handshake', methods=['POST'])
+def v1_auth_handshake():
+    """ECDH密钥交换握手 - V1版本"""
+    data = request.get_json() or {}
+    public_key = data.get('public_key', '')
+    
+    # 返回服务器公钥（这里使用一个固定的演示公钥）
+    if HAS_CRYPTO:
+        # 生成临时密钥对用于握手
+        private_key, server_public_key = generate_ecdh_keypair()
+        server_public_key_pem = get_public_key_pem(server_public_key)
+        # 将私钥临时存储（实际应该会话存储）
+        handshake_private_key = server_public_key_pem  # 简化处理
+    else:
+        server_public_key_pem = "DEMO_SERVER_PUBLIC_KEY"
+        handshake_private_key = "DEMO_SERVER_PRIVATE_KEY"
+    
+    return jsonify({
+        "code": 0,
+        "data": {
+            "public_key": server_public_key_pem,
+            "key_type": "ECDH"
         }
     })
 
