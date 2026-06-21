@@ -1,17 +1,23 @@
 # ====================================================================
-# OldChat 兼容服务器 — 单文件实现
-# Python 3 + Flask + SQLite3 + cryptography + eventlet (WebSocket)
+# OldChat 兼容服务器 — 单文件实现 (Python 3 + Flask + SQLite3 + eventlet)
+# 参考: OldChat Android 源码 (g0/*, o0/*, com/im/oldchat/ui/*)
 # ====================================================================
 
-# --- 1. Imports ---
+# --- eventlet.monkey_patch() 必须放在最前面 ---
+try:
+    import eventlet
+    eventlet.monkey_patch(socket=True, select=True, time=True, thread=True)
+    HAS_EVENTLET = True
+except Exception:
+    HAS_EVENTLET = False
+
 import os
 import sys
 import json
 import time
-import base64
 import secrets
 import hashlib
-import hmac as hmac_mod
+import base64
 import sqlite3
 import logging
 import threading
@@ -20,128 +26,89 @@ from pathlib import Path
 from flask import (Flask, g, request, jsonify, send_from_directory,
                    make_response, abort)
 
+if HAS_EVENTLET:
+    try:
+        from eventlet import wsgi as _ew
+        from eventlet.websocket import WebSocketWSGI
+        from eventlet.websocket import WebSocket
+    except Exception:
+        HAS_EVENTLET = False
+
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
-# --- eventlet (for WebSocket) ---
-try:
-    import eventlet
-    eventlet.monkey_patch(socket=True, select=True, time=True, thread=True)
-    HAS_EVENTLET = True
-    from eventlet import wsgi as eventlet_wsgi
-    from eventlet.websocket import WebSocketWSGI
-except ImportError:
-    HAS_EVENTLET = False
-
-# --- 2. Config & Setup ---
+# --- Config ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "oldchat.db")
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(MEDIA_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
+APP_VERSION = "1.0.0"
+APP_NAME = "OldChat"
+
+app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 app.secret_key = secrets.token_hex(32)
 
-if __name__ != "__main__":
-    gunicorn_logger = logging.getLogger("gunicorn.error")
-    if gunicorn_logger.handlers:
-        app.logger.handlers = gunicorn_logger.handlers
-        app.logger.setLevel(gunicorn_logger.level)
-else:
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("oldchat")
 
-# --- 3. Crypto Helpers ---
-def pkcs7_pad(data: bytes, block_size: int = 16) -> bytes:
-    pad_len = block_size - (len(data) % block_size)
-    return data + bytes([pad_len] * pad_len)
-
-def pkcs7_unpad(data: bytes) -> bytes:
-    if not data:
-        raise ValueError("empty data")
-    pad_len = data[-1]
-    if pad_len < 1 or pad_len > 16:
-        raise ValueError("invalid padding")
-    for i in range(len(data) - pad_len, len(data)):
-        if data[i] != pad_len:
-            raise ValueError("invalid padding")
-    return data[:-pad_len]
-
-def truncate_to_32(data: bytes) -> bytes:
-    if len(data) == 32:
-        return data
-    result = bytearray(32)
-    if len(data) > 32:
-        result[:] = data[-32:]
-    else:
-        result[32 - len(data):] = data
-    return bytes(result)
+# --- Crypto Helpers -------------------------------------------------------
 
 def encrypt_body(aes_key: bytes, mac_key: bytes, plaintext: bytes) -> dict:
     iv = os.urandom(16)
-    padded = pkcs7_pad(plaintext)
+    pad_len = 16 - (len(plaintext) % 16)
+    padded = plaintext + bytes([pad_len]) * pad_len
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-    mac_val = hmac_mod.new(mac_key, iv + ciphertext, "sha256").digest()
+    ct = cipher.encryptor().update(padded) + cipher.encryptor().finalize()
+    mac_v = hashlib.sha256(mac_key + iv + ct).digest()
     return {
         "iv": base64.b64encode(iv).decode("ascii"),
-        "data": base64.b64encode(ciphertext).decode("ascii"),
-        "mac": base64.b64encode(mac_val).decode("ascii"),
+        "data": base64.b64encode(ct).decode("ascii"),
+        "mac": base64.b64encode(mac_v).decode("ascii"),
     }
 
 def decrypt_body(aes_key: bytes, mac_key: bytes, enc_dict: dict) -> bytes:
     iv = base64.b64decode(enc_dict["iv"])
-    ciphertext = base64.b64decode(enc_dict["data"])
+    ct = base64.b64decode(enc_dict["data"])
     mac_expected = base64.b64decode(enc_dict["mac"])
-    mac_actual = hmac_mod.new(mac_key, iv + ciphertext, "sha256").digest()
-    if not hmac_mod.compare_digest(mac_actual, mac_expected):
-        raise ValueError("HMAC mismatch")
+    mac_actual = hashlib.sha256(mac_key + iv + ct).digest()
+    if mac_actual != mac_expected:
+        raise ValueError("MAC mismatch")
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    padded = decryptor.update(ciphertext) + decryptor.finalize()
-    return pkcs7_unpad(padded)
+    plain = cipher.decryptor().update(ct) + cipher.decryptor().finalize()
+    pad_len = plain[-1]
+    return plain[:-pad_len]
 
 def do_ecdh_handshake(client_pub_b64: str):
-    """执行 ECDH 密钥交换，返回 (session_id, server_pub_b64, aes_key, hmac_key)"""
     server_private = ec.generate_private_key(ec.SECP256R1(), default_backend())
-    server_public = server_private.public_key()
-    client_pub_bytes = base64.b64decode(client_pub_b64)
-    client_public = serialization.load_der_public_key(client_pub_bytes, default_backend())
-    shared_secret = server_private.exchange(ec.ECDH(), client_public)
-    raw_secret = truncate_to_32(shared_secret)
-    aes_key = hashlib.sha256(raw_secret + b"enc").digest()
-    mac_key = hashlib.sha256(raw_secret + b"mac").digest()
-    session_id = secrets.token_hex(16).upper()
-    server_pub_bytes = server_public.public_bytes(
+    server_pub = server_private.public_key().public_bytes(
         encoding=serialization.Encoding.DER,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    server_pub_b64 = base64.b64encode(server_pub_bytes).decode("ascii")
-    return session_id, server_pub_b64, aes_key, mac_key
+    client_pub = serialization.load_der_public_key(
+        base64.b64decode(client_pub_b64), default_backend()
+    )
+    shared = server_private.exchange(ec.ECDH(), client_pub)
+    if len(shared) < 32:
+        raw = b"\x00" * (32 - len(shared)) + shared
+    else:
+        raw = shared[-32:]
+    aes_key = hashlib.sha256(raw + b"enc").digest()
+    mac_key = hashlib.sha256(raw + b"mac").digest()
+    session_id = secrets.token_hex(16).upper()
+    return session_id, base64.b64encode(server_pub).decode("ascii"), aes_key, mac_key
 
-# --- 4. DB Helpers ---
+# --- DB -------------------------------------------------------------------
+
 _db_lock = threading.Lock()
-
-def get_db():
-    db = getattr(g, "_db", None)
-    if db is None:
-        db = sqlite3.connect(DB_PATH, check_same_thread=False)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA foreign_keys=ON")
-        g._db = db
-    return db
-
-def db_close(exception=None):
-    db = getattr(g, "_db", None)
-    if db is not None:
-        db.close()
-
-app.teardown_appcontext(db_close)
 
 def db_query_one(sql: str, params=()):
     with _db_lock:
@@ -149,8 +116,7 @@ def db_query_one(sql: str, params=()):
         conn.row_factory = sqlite3.Row
         try:
             cur = conn.execute(sql, params)
-            row = cur.fetchone()
-            return row
+            return cur.fetchone()
         finally:
             conn.close()
 
@@ -159,8 +125,7 @@ def db_query_all(sql: str, params=()):
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
-            cur = conn.execute(sql, params)
-            return cur.fetchall()
+            return conn.execute(sql, params).fetchall()
         finally:
             conn.close()
 
@@ -170,12 +135,12 @@ def db_execute(sql: str, params=()) -> int:
         try:
             cur = conn.execute(sql, params)
             conn.commit()
-            last_id = cur.lastrowid
-            return last_id if last_id else 0
+            lid = cur.lastrowid
+            return lid if lid else 0
         finally:
             conn.close()
 
-def db_executemany(sql: str, params_list) -> None:
+def db_executemany(sql: str, params_list):
     with _db_lock:
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         try:
@@ -188,109 +153,152 @@ def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try:
         conn.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uid TEXT UNIQUE NOT NULL,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            display_name TEXT,
-            avatar_url TEXT,
-            cover_url TEXT,
-            bio TEXT DEFAULT '',
-            online INTEGER DEFAULT 0,
-            last_seen INTEGER,
-            created_at INTEGER
-        );
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid TEXT UNIQUE NOT NULL,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                display_name TEXT,
+                avatar_url TEXT,
+                cover_url TEXT,
+                bio TEXT DEFAULT '',
+                online INTEGER DEFAULT 0,
+                last_seen INTEGER,
+                created_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_users_uid ON users(uid);
 
-        CREATE TABLE IF NOT EXISTS sessions (
-            session_id TEXT PRIMARY KEY,
-            user_id INTEGER,
-            aes_key_b64 TEXT NOT NULL,
-            hmac_key_b64 TEXT NOT NULL,
-            created_at INTEGER,
-            expires_at INTEGER
-        );
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                user_id INTEGER,
+                aes_key_b64 TEXT NOT NULL,
+                hmac_key_b64 TEXT NOT NULL,
+                created_at INTEGER,
+                expires_at INTEGER
+            );
 
-        CREATE TABLE IF NOT EXISTS tokens (
-            access_token TEXT PRIMARY KEY,
-            refresh_token TEXT UNIQUE,
-            user_id INTEGER NOT NULL,
-            created_at INTEGER,
-            expires_at INTEGER
-        );
+            CREATE TABLE IF NOT EXISTS tokens (
+                access_token TEXT PRIMARY KEY,
+                refresh_token TEXT UNIQUE,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER,
+                expires_at INTEGER
+            );
 
-        CREATE TABLE IF NOT EXISTS friendships (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            friend_id INTEGER NOT NULL,
-            status TEXT DEFAULT 'pending',
-            initiated_by INTEGER,
-            created_at INTEGER,
-            UNIQUE(user_id, friend_id)
-        );
+            CREATE TABLE IF NOT EXISTS friendships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                friend_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
+                initiated_by INTEGER,
+                created_at INTEGER,
+                UNIQUE(user_id, friend_id)
+            );
 
-        CREATE TABLE IF NOT EXISTS groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            avatar_url TEXT,
-            owner_id INTEGER,
-            created_at INTEGER
-        );
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                avatar_url TEXT,
+                owner_id INTEGER,
+                created_at INTEGER
+            );
 
-        CREATE TABLE IF NOT EXISTS group_members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT NOT NULL,
-            user_id INTEGER NOT NULL,
-            joined_at INTEGER,
-            UNIQUE(group_id, user_id)
-        );
+            CREATE TABLE IF NOT EXISTS group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                joined_at INTEGER,
+                UNIQUE(group_id, user_id)
+            );
 
-        CREATE TABLE IF NOT EXISTS direct_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            from_id INTEGER NOT NULL,
-            to_id INTEGER NOT NULL,
-            body TEXT,
-            msg_type TEXT DEFAULT 'text',
-            media_url TEXT,
-            thumb_url TEXT,
-            burn_after_seconds INTEGER DEFAULT 0,
-            created_at INTEGER,
-            is_read INTEGER DEFAULT 0
-        );
+            CREATE TABLE IF NOT EXISTS direct_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_id INTEGER NOT NULL,
+                to_id INTEGER NOT NULL,
+                body TEXT,
+                msg_type TEXT DEFAULT 'text',
+                media_url TEXT,
+                thumb_url TEXT,
+                burn_after_seconds INTEGER DEFAULT 0,
+                created_at INTEGER,
+                is_read INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_dm_pair ON direct_messages(from_id, to_id);
+            CREATE INDEX IF NOT EXISTS idx_dm_pair2 ON direct_messages(to_id, from_id);
 
-        CREATE TABLE IF NOT EXISTS group_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT NOT NULL,
-            from_id INTEGER NOT NULL,
-            body TEXT,
-            msg_type TEXT DEFAULT 'text',
-            media_url TEXT,
-            thumb_url TEXT,
-            burn_after_seconds INTEGER DEFAULT 0,
-            created_at INTEGER
-        );
+            CREATE TABLE IF NOT EXISTS group_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                from_id INTEGER NOT NULL,
+                body TEXT,
+                msg_type TEXT DEFAULT 'text',
+                media_url TEXT,
+                thumb_url TEXT,
+                burn_after_seconds INTEGER DEFAULT 0,
+                created_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_gm_group ON group_messages(group_id);
 
-        CREATE TABLE IF NOT EXISTS group_message_reads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id TEXT NOT NULL,
-            user_id INTEGER NOT NULL,
-            message_id INTEGER NOT NULL,
-            created_at INTEGER,
-            UNIQUE(group_id, user_id, message_id)
-        );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT DEFAULT 'system',
+                title TEXT,
+                body TEXT,
+                extra_json TEXT,
+                created_at INTEGER,
+                is_read INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id);
 
-        CREATE INDEX IF NOT EXISTS idx_dm_pair ON direct_messages(from_id, to_id);
-        CREATE INDEX IF NOT EXISTS idx_dm_pair2 ON direct_messages(to_id, from_id);
-        CREATE INDEX IF NOT EXISTS idx_gm_group ON group_messages(group_id);
+            CREATE TABLE IF NOT EXISTS moments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                moment_id TEXT UNIQUE NOT NULL,
+                user_id INTEGER NOT NULL,
+                body TEXT,
+                media_url TEXT,
+                thumb_url TEXT,
+                created_at INTEGER,
+                likes INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_moments_user ON moments(user_id);
+
+            CREATE TABLE IF NOT EXISTS moment_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                moment_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                body TEXT,
+                created_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_mc_moment ON moment_comments(moment_id);
+
+            CREATE TABLE IF NOT EXISTS moment_likes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                moment_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                created_at INTEGER,
+                UNIQUE(moment_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS typing_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                is_group INTEGER DEFAULT 0,
+                updated_at INTEGER,
+                UNIQUE(chat_id, user_id)
+            );
         """)
         conn.commit()
     finally:
         conn.close()
 
-# --- WebSocket Connection Registry ---
+# --- WebSocket Connection Registry ----------------------------------------
+
 _ws_lock = threading.Lock()
-_ws_conns = {}  # {user_id: set(ws_objects)}
+_ws_conns = {}  # user_id -> set(ws_objects)
+_ws_active_sessions = {}  # user_id -> set(session_ids) (for dedupe)
 
 def register_ws(user_id, ws):
     with _ws_lock:
@@ -303,153 +311,26 @@ def unregister_ws(user_id, ws):
             if not _ws_conns[user_id]:
                 del _ws_conns[user_id]
 
-def get_online_user_ids():
+def ws_online_user_ids():
     with _ws_lock:
         return set(_ws_conns.keys())
 
-def push_message(user_id, payload: dict):
-    """向特定用户的所有 WebSocket 连接推送消息"""
+def push_to_user(user_id, payload: dict):
     with _ws_lock:
         conns = list(_ws_conns.get(user_id, set()))
     if not conns:
-        return
-    msg_text = json.dumps(payload, ensure_ascii=False)
+        return 0
+    text = json.dumps(payload, ensure_ascii=False)
+    sent = 0
     for ws in conns:
         try:
-            ws.send(msg_text)
+            ws.send(text)
+            sent += 1
         except Exception:
             pass
+    return sent
 
-def broadcast_presence(user_id, online: bool):
-    """向该用户的所有好友广播在线状态变更"""
-    row = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (user_id,))
-    if not row:
-        return
-    my_uid = row["uid"]
-    friends = db_query_all(
-        """SELECT u.id FROM users u
-           JOIN friendships f ON (f.user_id = u.id AND f.friend_id = ? AND f.status = 'accepted')
-                              OR (f.friend_id = u.id AND f.user_id = ? AND f.status = 'accepted')
-           WHERE u.id != ?""",
-        (user_id, user_id, user_id),
-    )
-    payload = {
-        "type": "presence",
-        "uid": my_uid,
-        "online": 1 if online else 0,
-        "display_name": row["display_name"] or my_uid,
-        "avatar_url": row["avatar_url"] or "",
-    }
-    for f in friends:
-        push_message(f["id"], payload)
-
-# --- 5. Middleware ---
-@app.before_request
-def before_request_hook():
-    # CORS OPTIONS
-    if request.method == "OPTIONS":
-        resp = make_response("", 204)
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Enc, X-Session"
-        return resp
-
-    # 初始化 g 字段
-    g.current_session_id = None
-    g.current_aes_key = None
-    g.current_hmac_key = None
-    g.decrypted_json = None
-    g.current_user_id = None
-    g.current_user = None
-
-    # 判断是否 multipart 上传
-    ctype = request.headers.get("Content-Type", "")
-    is_multipart = "multipart/form-data" in ctype.lower()
-
-    # --- ECDH Session & 解密 ---
-    session_id = request.headers.get("X-Session")
-    enc_flag = request.headers.get("X-Enc")
-
-    if session_id and enc_flag == "1" and not is_multipart:
-        row = db_query_one(
-            "SELECT aes_key_b64, hmac_key_b64, user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
-            (session_id, int(time.time())),
-        )
-        if row:
-            g.current_session_id = session_id
-            g.current_aes_key = base64.b64decode(row["aes_key_b64"])
-            g.current_hmac_key = base64.b64decode(row["hmac_key_b64"])
-            if row["user_id"]:
-                g.current_user_id_from_session = row["user_id"]
-
-            # 有 body 的 POST/PUT 请求，尝试解密
-            if request.method in ("POST", "PUT", "DELETE"):
-                raw_body = request.get_data(cache=True)
-                if raw_body and len(raw_body) > 0:
-                    try:
-                        enc_json = json.loads(raw_body.decode("utf-8"))
-                        if "iv" in enc_json and "data" in enc_json and "mac" in enc_json:
-                            plain_bytes = decrypt_body(g.current_aes_key, g.current_hmac_key, enc_json)
-                            g.decrypted_json = json.loads(plain_bytes.decode("utf-8"))
-                    except Exception:
-                        pass  # 失败就当作明文或空 body 处理
-
-    # --- Authorization Bearer Token ---
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-        row = db_query_one(
-            "SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
-            (token, int(time.time())),
-        )
-        if row:
-            g.current_user_id = row["user_id"]
-            user_row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
-            if user_row:
-                g.current_user = dict(user_row)
-
-    # 如果没有 Authorization 头但有 session 关联的 user_id，也填充
-    if not g.current_user_id and hasattr(g, "current_user_id_from_session") and g.current_user_id_from_session:
-        g.current_user_id = g.current_user_id_from_session
-        user_row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
-        if user_row:
-            g.current_user = dict(user_row)
-
-@app.after_request
-def after_request_hook(response):
-    # CORS 头
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Enc, X-Session"
-
-    # 如果是加密会话且响应是 JSON → 加密
-    if (g.current_session_id and g.current_aes_key and g.current_hmac_key):
-        if response.is_json:
-            try:
-                data = response.get_json()
-                plain_bytes = json.dumps(data, ensure_ascii=False).encode("utf-8")
-                enc = encrypt_body(g.current_aes_key, g.current_hmac_key, plain_bytes)
-                response.data = json.dumps(enc, ensure_ascii=False).encode("utf-8")
-                response.headers["Content-Type"] = "application/json"
-            except Exception as e:
-                app.logger.debug(f"response encrypt failed: {e}")
-
-    return response
-
-# --- 6. Utilities ---
-def req_json() -> dict:
-    if getattr(g, "decrypted_json", None) is not None:
-        return g.decrypted_json
-    data = request.get_json(silent=True)
-    return data if data else {}
-
-def require_auth():
-    if not getattr(g, "current_user_id", None):
-        return jsonify({"error": "Unauthorized", "code": "unauthorized"}), 401
-    return None
-
-def err(msg: str, code: str = "error", status: int = 400):
-    return jsonify({"error": msg, "code": code}), status
+# --- Helpers --------------------------------------------------------------
 
 def now_ts() -> int:
     return int(time.time())
@@ -460,216 +341,242 @@ def gen_uid() -> str:
 def gen_group_id() -> str:
     return "GRP-" + secrets.token_hex(8).upper()
 
+def gen_moment_id() -> str:
+    return "MMT-" + secrets.token_hex(12).upper()
+
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
     pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100000)
-    return f"pbkdf2_sha256$100000${base64.b64encode(salt).decode()}${base64.b64encode(pw_hash).decode()}"
+    return "pbkdf2_sha256$100000$" + base64.b64encode(salt).decode() + "$" + base64.b64encode(pw_hash).decode()
 
 def verify_password(password: str, stored: str) -> bool:
     try:
         parts = stored.split("$")
         if len(parts) != 4:
             return False
-        algo, iterations, salt_b64, hash_b64 = parts
+        _, iters, salt_b64, hash_b64 = parts
         salt = base64.b64decode(salt_b64)
         expected = base64.b64decode(hash_b64)
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations))
-        return hmac_mod.compare_digest(actual, expected)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iters))
+        return actual == expected
     except Exception:
         return False
-
-def user_to_dict(row) -> dict:
-    if row is None:
-        return {}
-    uid = row["uid"]
-    online = 0
-    if row["id"] in get_online_user_ids():
-        online = 1
-    return {
-        "id": row["id"],
-        "uid": uid,
-        "username": row["username"],
-        "display_name": row["display_name"] or uid,
-        "avatar_url": row["avatar_url"] or "",
-        "cover_url": row["cover_url"] or "",
-        "bio": row["bio"] or "",
-        "online": online,
-        "last_seen": row["last_seen"] or row["created_at"],
-        "created_at": row["created_at"],
-    }
-
-def direct_msg_to_dict(row, from_user=None) -> dict:
-    if row is None:
-        return {}
-    msg = {
-        "id": row["id"],
-        "from_uid": "",
-        "to_uid": "",
-        "body": row["body"] or "",
-        "msg_type": row["msg_type"] or "text",
-        "media_url": row["media_url"] or "",
-        "thumb_url": row["thumb_url"] or "",
-        "burn_after_seconds": row["burn_after_seconds"] or 0,
-        "created_at": row["created_at"],
-        "is_read": row["is_read"] or 0,
-        "from_name": "",
-        "from_avatar": "",
-    }
-    # from_uid, to_uid, from_name, from_avatar
-    f = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (row["from_id"],))
-    t = db_query_one("SELECT uid FROM users WHERE id = ?", (row["to_id"],))
-    if f:
-        msg["from_uid"] = f["uid"]
-        msg["from_name"] = f["display_name"] or f["uid"]
-        msg["from_avatar"] = f["avatar_url"] or ""
-    if t:
-        msg["to_uid"] = t["uid"]
-    return msg
-
-def group_msg_to_dict(row) -> dict:
-    if row is None:
-        return {}
-    msg = {
-        "id": row["id"],
-        "group_id": row["group_id"],
-        "from_uid": "",
-        "body": row["body"] or "",
-        "msg_type": row["msg_type"] or "text",
-        "media_url": row["media_url"] or "",
-        "thumb_url": row["thumb_url"] or "",
-        "burn_after_seconds": row["burn_after_seconds"] or 0,
-        "created_at": row["created_at"],
-        "from_name": "",
-        "from_avatar": "",
-    }
-    f = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (row["from_id"],))
-    if f:
-        msg["from_uid"] = f["uid"]
-        msg["from_name"] = f["display_name"] or f["uid"]
-        msg["from_avatar"] = f["avatar_url"] or ""
-    return msg
 
 def issue_tokens(user_id: int) -> tuple:
     access_token = secrets.token_hex(20).upper()
     refresh_token = secrets.token_hex(32).upper()
     created = now_ts()
-    expires = created + 30 * 24 * 3600  # 30 天
+    expires = created + 30 * 24 * 3600
     db_execute(
         "INSERT INTO tokens (access_token, refresh_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
         (access_token, refresh_token, user_id, created, expires),
     )
     return access_token, refresh_token
 
-def update_last_seen(user_id: int):
-    db_execute("UPDATE users SET last_seen = ? WHERE id = ?", (now_ts(), user_id))
+def user_to_dict(row) -> dict:
+    if row is None:
+        return {}
+    uid = row["uid"]
+    return {
+        "id": str(row["id"]),
+        "uid": uid,
+        "username": row["username"],
+        "display_name": row["display_name"] or uid,
+        "avatar_url": row["avatar_url"] or "",
+        "cover_url": row["cover_url"] or "",
+        "bio": row["bio"] or "",
+        "online": 1 if row["id"] in ws_online_user_ids() else 0,
+        "last_seen": row["last_seen"] or row["created_at"],
+        "created_at": row["created_at"],
+    }
 
-# --- 7. Auth Routes ---
+def uid_to_user_id(uid: str):
+    if not uid:
+        return None
+    row = db_query_one("SELECT id FROM users WHERE uid = ?", (uid.upper(),))
+    return row["id"] if row else None
+
+def require_auth():
+    """Return error response if not authenticated, else None."""
+    if not getattr(g, "current_user_id", None):
+        return jsonify({"code": 401, "msg": "Unauthorized"}), 401
+    return None
+
+# --- Middleware -----------------------------------------------------------
+
+@app.before_request
+def before_request_mw():
+    if request.method == "OPTIONS":
+        resp = make_response("", 204)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Enc, X-Session"
+        return resp
+
+    g.current_session_id = None
+    g.current_aes_key = None
+    g.current_hmac_key = None
+    g.decrypted_json = None
+    g.current_user_id = None
+
+    ctype = request.headers.get("Content-Type", "")
+    is_multipart = "multipart/form-data" in ctype.lower()
+
+    session_id = request.headers.get("X-Session")
+    enc_flag = request.headers.get("X-Enc")
+
+    if session_id and enc_flag == "1" and not is_multipart:
+        row = db_query_one(
+            "SELECT aes_key_b64, hmac_key_b64, user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
+            (session_id, now_ts()),
+        )
+        if row:
+            g.current_session_id = session_id
+            g.current_aes_key = base64.b64decode(row["aes_key_b64"])
+            g.current_hmac_key = base64.b64decode(row["hmac_key_b64"])
+            if row["user_id"]:
+                g.current_session_user_id = row["user_id"]
+
+            # Decrypt request body if POST/PUT/DELETE
+            if request.method in ("POST", "PUT", "DELETE"):
+                raw_body = request.get_data(cache=True)
+                if raw_body and len(raw_body) > 0:
+                    try:
+                        enc_json = json.loads(raw_body.decode("utf-8"))
+                        if "iv" in enc_json and "data" in enc_json and "mac" in enc_json:
+                            plain_bytes = decrypt_body(g.current_aes_key, g.current_hmac_key, enc_json)
+                            g.decrypted_json = json.loads(plain_bytes.decode("utf-8"))
+                    except Exception:
+                        pass
+
+    # Authorization header check
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        row = db_query_one(
+            "SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
+            (token, now_ts()),
+        )
+        if row:
+            g.current_user_id = row["user_id"]
+
+    # fallback: session-bound user_id
+    if not g.current_user_id and hasattr(g, "current_session_user_id") and g.current_session_user_id:
+        g.current_user_id = g.current_session_user_id
+
+@app.after_request
+def after_request_mw(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Enc, X-Session"
+
+    if g.current_session_id and g.current_aes_key and response.is_json:
+        try:
+            data = response.get_json()
+            if isinstance(data, (dict, list)):
+                plain = json.dumps(data, ensure_ascii=False).encode("utf-8")
+                enc = encrypt_body(g.current_aes_key, g.current_hmac_key, plain)
+                response.data = json.dumps(enc, ensure_ascii=False).encode("utf-8")
+                response.headers["Content-Type"] = "application/json"
+        except Exception as e:
+            log.warning("encrypt response failed: %s", e)
+
+    return response
+
+# --- body helper ---------------------------------------------------------
+
+def req_json() -> dict:
+    if getattr(g, "decrypted_json", None):
+        return g.decrypted_json
+    data = request.get_json(silent=True)
+    return data if data else {}
+
+# =========================================================================
+#  Auth Routes
+# =========================================================================
+
 @app.route("/v1/auth/handshake", methods=["POST"])
-def route_auth_handshake():
+def auth_handshake():
     body = req_json()
     client_pub = body.get("client_pub") or body.get("clientPub")
     if not client_pub:
-        return err("missing client_pub", "missing_pubkey")
+        return jsonify({"code": 400, "msg": "missing client_pub"}), 400
     try:
         session_id, server_pub, aes_key, mac_key = do_ecdh_handshake(client_pub)
     except Exception as e:
-        return err(f"handshake failed: {e}", "handshake_error")
-
+        return jsonify({"code": 400, "msg": "handshake failed: %s" % e}), 400
     created = now_ts()
-    expires = created + 24 * 3600  # 24 小时
+    expires = created + 24 * 3600
     db_execute(
         "INSERT INTO sessions (session_id, user_id, aes_key_b64, hmac_key_b64, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (session_id, None, base64.b64encode(aes_key).decode(), base64.b64encode(mac_key).decode(), created, expires),
+        (session_id, None, base64.b64encode(aes_key).decode(),
+         base64.b64encode(mac_key).decode(), created, expires),
     )
-    return jsonify({
-        "session_id": session_id,
-        "server_pub": server_pub,
-        "expires_at": expires,
-    })
+    return jsonify({"session_id": session_id, "server_pub": server_pub, "expires_at": expires})
 
 @app.route("/v1/auth/register", methods=["POST"])
-def route_auth_register():
+def auth_register():
     body = req_json()
-    username = (body.get("username") or body.get("identifier") or "").strip()
+    username = (body.get("username") or body.get("uid") or "").strip()
     password = (body.get("password") or "").strip()
     display_name = (body.get("display_name") or "").strip() or username
-    if len(username) < 3:
-        return err("username too short", "username_short")
+    if len(username) < 2:
+        return jsonify({"code": 400, "msg": "username too short"}), 400
     if len(password) < 4:
-        return err("password too short", "password_short")
-
-    # 检查用户名是否已存在
-    existing = db_query_one("SELECT id FROM users WHERE username = ?", (username,))
+        return jsonify({"code": 400, "msg": "password too short"}), 400
+    existing = db_query_one("SELECT id FROM users WHERE username = ? OR uid = ?", (username, username.upper()))
     if existing:
-        return err("username already exists", "username_exists", 409)
-
+        return jsonify({"code": 409, "msg": "username already exists"}), 409
     uid = gen_uid()
     pw_hash = hash_password(password)
     created = now_ts()
-    user_id = db_execute(
-        """INSERT INTO users (uid, username, password_hash, display_name, avatar_url, cover_url, bio, online, last_seen, created_at)
-           VALUES (?, ?, ?, ?, '', '', '', 0, ?, ?)""",
+    db_execute(
+        "INSERT INTO users (uid, username, password_hash, display_name, avatar_url, cover_url, bio, online, last_seen, created_at) VALUES (?, ?, ?, ?, '', '', '', 0, ?, ?)",
         (uid, username, pw_hash, display_name, created, created),
     )
-    # 重新读取用户（db_execute 返回 lastrowid 在不同情况下可能为 0）
     row = db_query_one("SELECT * FROM users WHERE uid = ?", (uid,))
     if not row:
-        return err("failed to create user", "db_error", 500)
-
-    # 关联 session（如果在握手后立刻注册）
+        return jsonify({"code": 500, "msg": "db error"}), 500
     if g.current_session_id:
         db_execute("UPDATE sessions SET user_id = ? WHERE session_id = ?",
                    (row["id"], g.current_session_id))
-
     access_token, refresh_token = issue_tokens(row["id"])
-    user_dict = user_to_dict(row)
     return jsonify({
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "user": user_dict,
+        "user": user_to_dict(row),
     })
 
 @app.route("/v1/auth/login", methods=["POST"])
-def route_auth_login():
+def auth_login():
     body = req_json()
     identifier = (body.get("identifier") or body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
     if not identifier or not password:
-        return err("missing credentials", "missing_credentials")
-
-    row = db_query_one("SELECT * FROM users WHERE username = ? OR uid = ?", (identifier, identifier))
-    if not row:
-        return err("invalid credentials", "invalid_credentials", 401)
-    if not verify_password(password, row["password_hash"]):
-        return err("invalid credentials", "invalid_credentials", 401)
-
-    # 关联 session（如果已握手）
+        return jsonify({"code": 400, "msg": "missing credentials"}), 400
+    row = db_query_one("SELECT * FROM users WHERE username = ? OR uid = ?", (identifier, identifier.upper()))
+    if not row or not verify_password(password, row["password_hash"]):
+        return jsonify({"code": 401, "msg": "invalid credentials"}), 401
     if g.current_session_id:
         db_execute("UPDATE sessions SET user_id = ? WHERE session_id = ?",
                    (row["id"], g.current_session_id))
-
     access_token, refresh_token = issue_tokens(row["id"])
-    update_last_seen(row["id"])
-    user_dict = user_to_dict(row)
+    db_execute("UPDATE users SET last_seen = ? WHERE id = ?", (now_ts(), row["id"]))
     return jsonify({
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "user": user_dict,
+        "user": user_to_dict(row),
     })
 
 @app.route("/v1/auth/refresh", methods=["POST"])
-def route_auth_refresh():
+def auth_refresh():
     body = req_json()
     refresh_token = (body.get("refresh_token") or "").strip()
     if not refresh_token:
-        return err("missing refresh_token", "missing_refresh", 401)
-    row = db_query_one(
-        "SELECT user_id FROM tokens WHERE refresh_token = ? AND expires_at > ?",
-        (refresh_token, int(time.time()) - 365 * 24 * 3600),  # refresh token 1年有效
-    )
+        return jsonify({"code": 401, "msg": "missing refresh_token"}), 401
+    row = db_query_one("SELECT user_id FROM tokens WHERE refresh_token = ?", (refresh_token,))
     if not row:
-        return err("invalid refresh token", "invalid_refresh", 401)
-    # 失效旧 token
+        return jsonify({"code": 401, "msg": "invalid refresh token"}), 401
     db_execute("DELETE FROM tokens WHERE refresh_token = ?", (refresh_token,))
     access_token, new_refresh = issue_tokens(row["user_id"])
     user_row = db_query_one("SELECT * FROM users WHERE id = ?", (row["user_id"],))
@@ -680,229 +587,211 @@ def route_auth_refresh():
     })
 
 @app.route("/v1/auth/captcha", methods=["GET"])
-def route_auth_captcha():
-    # 简化：不需要验证码
+def auth_captcha():
     return jsonify({"captcha_id": "none", "image_url": ""})
 
 @app.route("/v1/auth/email/send", methods=["POST"])
-def route_auth_email_send():
-    # 简化：不需要邮件验证
+def auth_email_send():
     return jsonify({"sent": False, "message": "email verification disabled"})
 
-# --- 8. User Routes ---
+# =========================================================================
+#  User Routes
+# =========================================================================
+
 @app.route("/v1/me", methods=["GET"])
-def route_me():
-    if auth_err := require_auth():
-        return auth_err
-    update_last_seen(g.current_user_id)
+def user_me():
+    _auth = require_auth()
+    if _auth: return _auth
     row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
     if not row:
-        return err("user not found", "not_found", 404)
+        return jsonify({"code": 404, "msg": "user not found"}), 404
     return jsonify(user_to_dict(row))
 
 @app.route("/v1/me/profile", methods=["POST"])
-def route_me_profile():
-    if auth_err := require_auth():
-        return auth_err
+def user_update_profile():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
-    display_name = body.get("display_name")
-    bio = body.get("bio")
-    avatar_url = body.get("avatar_url")
-    cover_url = body.get("cover_url")
-
     sets, params = [], []
-    if display_name is not None:
-        sets.append("display_name = ?")
-        params.append(display_name)
-    if bio is not None:
-        sets.append("bio = ?")
-        params.append(bio)
-    if avatar_url is not None:
-        sets.append("avatar_url = ?")
-        params.append(avatar_url)
-    if cover_url is not None:
-        sets.append("cover_url = ?")
-        params.append(cover_url)
-    if not sets:
-        row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
-        return jsonify(user_to_dict(row))
-    params.append(g.current_user_id)
-    db_execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", tuple(params))
+    if body.get("display_name") is not None:
+        sets.append("display_name = ?"); params.append(body["display_name"])
+    if body.get("bio") is not None:
+        sets.append("bio = ?"); params.append(body["bio"])
+    if body.get("avatar_url") is not None:
+        sets.append("avatar_url = ?"); params.append(body["avatar_url"])
+    if body.get("cover_url") is not None:
+        sets.append("cover_url = ?"); params.append(body["cover_url"])
+    if sets:
+        params.append(g.current_user_id)
+        db_execute("UPDATE users SET %s WHERE id = ?" % ", ".join(sets), tuple(params))
     row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
     return jsonify(user_to_dict(row))
 
 @app.route("/v1/me/avatar", methods=["POST"])
-def route_me_avatar():
-    if auth_err := require_auth():
-        return auth_err
+def user_update_avatar():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
-    avatar_url = body.get("avatar_url") or ""
-    db_execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar_url, g.current_user_id))
-    return jsonify({"avatar_url": avatar_url})
+    avatar = body.get("avatar_url") or ""
+    db_execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar, g.current_user_id))
+    return jsonify({"avatar_url": avatar})
 
 @app.route("/v1/me/presence", methods=["POST"])
-def route_me_presence():
-    if auth_err := require_auth():
-        return auth_err
+def user_presence():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     online = int(body.get("online", 1))
     db_execute("UPDATE users SET online = ?, last_seen = ? WHERE id = ?", (online, now_ts(), g.current_user_id))
-    broadcast_presence(g.current_user_id, bool(online))
     return jsonify({"online": online})
 
 @app.route("/v1/users/profile", methods=["GET"])
-def route_user_profile():
-    if auth_err := require_auth():
-        return auth_err
-    uid = request.args.get("uid", "").strip()
+def user_profile():
+    _auth = require_auth()
+    if _auth: return _auth
+    uid = (request.args.get("uid") or "").strip().upper()
     if not uid:
-        return err("missing uid", "missing_uid")
-    row = db_query_one("SELECT * FROM users WHERE uid = ?", (uid.upper(),))
+        return jsonify({"code": 400, "msg": "missing uid"}), 400
+    row = db_query_one("SELECT * FROM users WHERE uid = ?", (uid,))
     if not row:
-        return err("user not found", "not_found", 404)
+        return jsonify({"code": 404, "msg": "user not found"}), 404
     return jsonify(user_to_dict(row))
 
-# --- 9. Friends Routes ---
+# =========================================================================
+#  Friends / Friendships
+# =========================================================================
+
 @app.route("/v1/friends", methods=["GET"])
-def route_friends():
-    if auth_err := require_auth():
-        return auth_err
-    uid = g.current_user_id
-    # 获取所有已接受的好友
+def friends_list():
+    _auth = require_auth()
+    if _auth: return _auth
+    me = g.current_user_id
     rows = db_query_all(
-        """SELECT u.* FROM users u
-           WHERE u.id IN (
-               SELECT CASE WHEN f.user_id = ? THEN f.friend_id ELSE f.user_id END
-               FROM friendships f
-               WHERE f.status = 'accepted' AND (f.user_id = ? OR f.friend_id = ?)
-           )""",
-        (uid, uid, uid),
+        """SELECT u.* FROM users u WHERE u.id IN (
+            SELECT CASE WHEN f.user_id = ? THEN f.friend_id ELSE f.user_id END
+            FROM friendships f WHERE f.status = 'accepted' AND (f.user_id = ? OR f.friend_id = ?)
+        )""",
+        (me, me, me),
     )
-    friends = [user_to_dict(r) for r in rows]
-    return jsonify({"friends": friends})
+    return jsonify({"friends": [user_to_dict(r) for r in rows]})
 
 @app.route("/v1/friends/request", methods=["POST"])
-def route_friend_request():
-    if auth_err := require_auth():
-        return auth_err
+def friends_request():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     to_uid = (body.get("to_uid") or "").strip().upper()
     if not to_uid:
-        return err("missing to_uid", "missing_uid")
-    target = db_query_one("SELECT id FROM users WHERE uid = ?", (to_uid,))
+        return jsonify({"code": 400, "msg": "missing to_uid"}), 400
+    target = db_query_one("SELECT id, uid, display_name FROM users WHERE uid = ?", (to_uid,))
     if not target:
-        return err("user not found", "not_found", 404)
+        return jsonify({"code": 404, "msg": "user not found"}), 404
     target_id = target["id"]
     if target_id == g.current_user_id:
-        return err("cannot add self", "invalid_user")
-
-    # 检查是否已有请求或已为好友
+        return jsonify({"code": 400, "msg": "cannot add self"}), 400
     existing = db_query_one(
         "SELECT id, status FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)",
         (g.current_user_id, target_id, target_id, g.current_user_id),
     )
     if existing:
-        if existing["status"] == "accepted":
-            return jsonify({"message": "already friends", "request_id": existing["id"]})
-        else:
-            return jsonify({"message": "request pending", "request_id": existing["id"]})
-
-    created = now_ts()
+        return jsonify({"request_id": str(existing["id"]), "message": "request pending or already friends"})
     rid = db_execute(
         "INSERT INTO friendships (user_id, friend_id, status, initiated_by, created_at) VALUES (?, ?, 'pending', ?, ?)",
-        (g.current_user_id, target_id, g.current_user_id, created),
+        (g.current_user_id, target_id, g.current_user_id, now_ts()),
     )
-    return jsonify({"request_id": rid, "message": "request sent"})
+    # Add notification for target
+    me_row = db_query_one("SELECT uid, display_name FROM users WHERE id = ?", (g.current_user_id,))
+    db_execute(
+        "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'friend_request', ?, ?, ?, ?, 0)",
+        (target_id, "好友请求", "%s 请求加你为好友" % (me_row["display_name"] or me_row["uid"]),
+         json.dumps({"from_uid": me_row["uid"] if me_row else "", "request_id": str(rid)}), now_ts()),
+    )
+    return jsonify({"request_id": str(rid), "message": "request sent"})
 
 @app.route("/v1/friends/requests", methods=["GET"])
-def route_friend_requests():
-    if auth_err := require_auth():
-        return auth_err
-    # 查询发给我的好友请求
+def friends_requests():
+    _auth = require_auth()
+    if _auth: return _auth
     rows = db_query_all(
-        """SELECT f.id, f.user_id AS from_user_id, f.created_at
-           FROM friendships f
-           WHERE f.friend_id = ? AND f.status = 'pending'
-           ORDER BY f.created_at DESC""",
+        """SELECT f.id, f.user_id AS from_user_id, f.status, f.created_at
+           FROM friendships f WHERE f.friend_id = ? ORDER BY f.created_at DESC LIMIT 100""",
         (g.current_user_id,),
     )
-    result = []
+    results = []
     for r in rows:
         from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_user_id"],))
-        if from_user:
-            result.append({
-                "id": r["id"],
-                "from_uid": from_user["uid"],
-                "from_name": from_user["display_name"] or from_user["uid"],
-                "from_avatar": from_user["avatar_url"] or "",
-                "created_at": r["created_at"],
-                "status": "pending",
-            })
-    return jsonify({"requests": result})
+        results.append({
+            "id": str(r["id"]),
+            "from_uid": from_user["uid"] if from_user else "",
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+            "status": r["status"],
+            "created_at": r["created_at"],
+        })
+    return jsonify({"requests": results})
 
 @app.route("/v1/friends/respond", methods=["POST"])
-def route_friend_respond():
-    if auth_err := require_auth():
-        return auth_err
+def friends_respond():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     request_id = body.get("request_id")
-    accept = body.get("accept")
-    if accept is None:
-        accept = body.get("accepted")
-    if accept is None:
-        accept = True
+    accept = body.get("accept") if body.get("accept") is not None else True
     if not request_id:
-        return err("missing request_id", "missing_id")
-
-    # 找到请求，且我是被请求方
+        return jsonify({"code": 400, "msg": "missing request_id"}), 400
+    try:
+        rid_int = int(request_id)
+    except Exception:
+        rid_int = 0
     row = db_query_one(
         "SELECT * FROM friendships WHERE id = ? AND friend_id = ? AND status = 'pending'",
-        (request_id, g.current_user_id),
+        (rid_int, g.current_user_id),
     )
     if not row:
-        return err("request not found", "not_found", 404)
+        return jsonify({"code": 404, "msg": "request not found"}), 404
     if accept:
-        db_execute("UPDATE friendships SET status = 'accepted' WHERE id = ?", (request_id,))
+        db_execute("UPDATE friendships SET status = 'accepted' WHERE id = ?", (rid_int,))
+        # Also create reverse-entry so user 1 and 2 both appear in each other's friend lists
+        # (not strictly necessary given how we query, but fine as-is)
     else:
-        db_execute("DELETE FROM friendships WHERE id = ?", (request_id,))
+        db_execute("DELETE FROM friendships WHERE id = ?", (rid_int,))
     return jsonify({"status": "accepted" if accept else "rejected"})
 
-# --- 10. Groups Routes ---
+# =========================================================================
+#  Groups
+# =========================================================================
+
 @app.route("/v1/groups/list", methods=["GET"])
-def route_groups_list():
-    if auth_err := require_auth():
-        return auth_err
+def groups_list():
+    _auth = require_auth()
+    if _auth: return _auth
     rows = db_query_all(
-        """SELECT g.* FROM groups g
-           JOIN group_members gm ON gm.group_id = g.group_id
-           WHERE gm.user_id = ?
-           ORDER BY g.created_at DESC""",
+        """SELECT g.* FROM groups g JOIN group_members gm ON gm.group_id = g.group_id
+           WHERE gm.user_id = ? ORDER BY g.created_at DESC""",
         (g.current_user_id,),
     )
     groups = []
     for r in rows:
-        member_count = db_query_one(
-            "SELECT COUNT(*) AS c FROM group_members WHERE group_id = ?", (r["group_id"],)
-        )
+        mc = db_query_one("SELECT COUNT(*) AS c FROM group_members WHERE group_id = ?", (r["group_id"],))
         groups.append({
             "group_id": r["group_id"],
             "name": r["name"],
             "avatar_url": r["avatar_url"] or "",
-            "owner_id": r["owner_id"],
+            "owner_id": str(r["owner_id"]) if r["owner_id"] else "",
             "created_at": r["created_at"],
-            "member_count": member_count["c"] if member_count else 0,
+            "member_count": mc["c"] if mc else 0,
         })
     return jsonify({"groups": groups})
 
 @app.route("/v1/groups/create", methods=["POST"])
-def route_groups_create():
-    if auth_err := require_auth():
-        return auth_err
+def groups_create():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     name = (body.get("name") or body.get("group_name") or "").strip()
     avatar_url = body.get("avatar_url") or ""
     if not name:
-        return err("group name required", "missing_name")
+        return jsonify({"code": 400, "msg": "group name required"}), 400
     group_id = gen_group_id()
     created = now_ts()
     db_execute(
@@ -913,132 +802,129 @@ def route_groups_create():
         "INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
         (group_id, g.current_user_id, created),
     )
-    return jsonify({
-        "group_id": group_id,
-        "name": name,
-        "avatar_url": avatar_url,
-        "owner_id": g.current_user_id,
-        "created_at": created,
-    })
+    return jsonify({"group_id": group_id, "name": name, "avatar_url": avatar_url, "owner_id": str(g.current_user_id), "created_at": created})
 
 @app.route("/v1/groups/join", methods=["POST"])
-def route_groups_join():
-    if auth_err := require_auth():
-        return auth_err
+def groups_join():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     group_id = (body.get("group_id") or "").strip()
     if not group_id:
-        return err("missing group_id", "missing_group")
-    g_row = db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
-    if not g_row:
-        return err("group not found", "not_found", 404)
-    existing = db_query_one(
-        "SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
-        (group_id, g.current_user_id),
-    )
+        return jsonify({"code": 400, "msg": "missing group_id"}), 400
+    gr = db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
+    if not gr:
+        return jsonify({"code": 404, "msg": "group not found"}), 404
+    existing = db_query_one("SELECT id FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, g.current_user_id))
     if existing:
-        return jsonify({"message": "already member", "group_id": group_id})
-    db_execute(
-        "INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
-        (group_id, g.current_user_id, now_ts()),
-    )
+        return jsonify({"group_id": group_id, "joined": True, "message": "already member"})
+    db_execute("INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
+               (group_id, g.current_user_id, now_ts()))
     return jsonify({"group_id": group_id, "joined": True})
 
 @app.route("/v1/groups/leave", methods=["POST"])
-def route_groups_leave():
-    if auth_err := require_auth():
-        return auth_err
+def groups_leave():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     group_id = (body.get("group_id") or "").strip()
-    db_execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
-               (group_id, g.current_user_id))
-    return jsonify({"left": True, "group_id": group_id})
+    db_execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, g.current_user_id))
+    return jsonify({"group_id": group_id, "left": True})
 
 @app.route("/v1/groups/members", methods=["GET"])
-def route_groups_members():
-    if auth_err := require_auth():
-        return auth_err
-    group_id = request.args.get("group_id", "").strip()
+def groups_members():
+    _auth = require_auth()
+    if _auth: return _auth
+    group_id = (request.args.get("group_id") or "").strip()
     if not group_id:
-        return err("missing group_id", "missing_group")
+        return jsonify({"code": 400, "msg": "missing group_id"}), 400
     rows = db_query_all(
-        """SELECT u.*, gm.joined_at FROM users u
-           JOIN group_members gm ON gm.user_id = u.id
-           WHERE gm.group_id = ?
-           ORDER BY gm.joined_at ASC""",
+        """SELECT u.* FROM users u JOIN group_members gm ON gm.user_id = u.id
+           WHERE gm.group_id = ? ORDER BY gm.joined_at ASC""",
         (group_id,),
     )
-    members = []
-    for r in rows:
-        ud = user_to_dict(r)
-        ud["joined_at"] = r["joined_at"]
-        members.append(ud)
-    return jsonify({"members": members})
+    return jsonify({"members": [user_to_dict(r) for r in rows]})
 
 @app.route("/v1/groups/settings", methods=["POST"])
-def route_groups_settings():
-    if auth_err := require_auth():
-        return auth_err
+def groups_settings():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     group_id = (body.get("group_id") or "").strip()
     name = body.get("name")
     avatar_url = body.get("avatar_url")
-    row = db_query_one("SELECT * FROM groups WHERE group_id = ? AND owner_id = ?",
-                       (group_id, g.current_user_id))
-    if not row:
-        return err("not owner or group not found", "forbidden", 403)
+    gr = db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
+    if not gr:
+        return jsonify({"code": 404, "msg": "group not found"}), 404
     sets, params = [], []
     if name:
-        sets.append("name = ?")
-        params.append(name)
+        sets.append("name = ?"); params.append(name)
     if avatar_url:
-        sets.append("avatar_url = ?")
-        params.append(avatar_url)
+        sets.append("avatar_url = ?"); params.append(avatar_url)
     if sets:
         params.append(group_id)
-        db_execute(f"UPDATE groups SET {', '.join(sets)} WHERE group_id = ?", tuple(params))
-    row = db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
+        db_execute("UPDATE groups SET %s WHERE group_id = ?" % ", ".join(sets), tuple(params))
+    gr = db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
     return jsonify({
-        "group_id": row["group_id"],
-        "name": row["name"],
-        "avatar_url": row["avatar_url"] or "",
-        "owner_id": row["owner_id"],
-        "created_at": row["created_at"],
+        "group_id": gr["group_id"],
+        "name": gr["name"],
+        "avatar_url": gr["avatar_url"] or "",
+        "owner_id": str(gr["owner_id"]) if gr["owner_id"] else "",
+        "created_at": gr["created_at"],
     })
 
-# --- 11. Direct Messages ---
+# =========================================================================
+#  Direct Messages
+# =========================================================================
+
 @app.route("/v1/direct/messages/v2", methods=["GET"])
-def route_direct_messages():
-    if auth_err := require_auth():
-        return auth_err
+def direct_messages():
+    _auth = require_auth()
+    if _auth: return _auth
     with_uid = (request.args.get("with_uid") or "").strip().upper()
     limit = min(int(request.args.get("limit", 50)), 200)
     offset = int(request.args.get("offset", 0))
     if not with_uid:
-        return err("missing with_uid", "missing_uid")
-    target = db_query_one("SELECT id FROM users WHERE uid = ?", (with_uid,))
+        return jsonify({"code": 400, "msg": "missing with_uid"}), 400
+    target = db_query_one("SELECT id, uid FROM users WHERE uid = ?", (with_uid,))
     if not target:
-        return err("user not found", "not_found", 404)
-    target_id = target["id"]
+        return jsonify({"code": 404, "msg": "user not found"}), 404
     me = g.current_user_id
-
-    # 子查询分页，确保按时间升序返回
+    target_id = target["id"]
     rows = db_query_all(
         """SELECT * FROM (
             SELECT * FROM direct_messages
             WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)
-            ORDER BY created_at DESC, id DESC
-            LIMIT ? OFFSET ?
+            ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
         ) ORDER BY created_at ASC, id ASC""",
         (me, target_id, target_id, me, limit, offset),
     )
-    messages = [direct_msg_to_dict(r) for r in rows]
+    messages = []
+    for r in rows:
+        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
+        to_user = db_query_one("SELECT uid FROM users WHERE id = ?", (r["to_id"],))
+        messages.append({
+            "id": str(r["id"]),
+            "thread_id": from_user["uid"] if from_user else "",
+            "from_uid": from_user["uid"] if from_user else "",
+            "to_uid": to_user["uid"] if to_user else "",
+            "body": r["body"] or "",
+            "msg_type": r["msg_type"] or "text",
+            "media_url": r["media_url"] or "",
+            "thumb_url": r["thumb_url"] or "",
+            "duration_ms": r["burn_after_seconds"] or 0,
+            "burn_after_seconds": r["burn_after_seconds"] or 0,
+            "created_at": r["created_at"],
+            "is_read": 1 if r["is_read"] else 0,
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+        })
     return jsonify({"messages": messages})
 
 @app.route("/v1/direct/send", methods=["POST"])
-def route_direct_send():
-    if auth_err := require_auth():
-        return auth_err
+def direct_send():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     to_uid = (body.get("to_uid") or "").strip().upper()
     msg_body = body.get("body", "") or ""
@@ -1046,114 +932,142 @@ def route_direct_send():
     burn = int(body.get("burn_after_seconds", 0) or 0)
     media_url = body.get("media_url") or ""
     thumb_url = body.get("thumb_url") or ""
-
     if not to_uid:
-        return err("missing to_uid", "missing_uid")
-    target = db_query_one("SELECT id FROM users WHERE uid = ?", (to_uid,))
+        return jsonify({"code": 400, "msg": "missing to_uid"}), 400
+    target = db_query_one("SELECT id, uid FROM users WHERE uid = ?", (to_uid,))
     if not target:
-        return err("user not found", "not_found", 404)
+        return jsonify({"code": 404, "msg": "user not found"}), 404
     target_id = target["id"]
-
     created = now_ts()
     msg_id = db_execute(
-        """INSERT INTO direct_messages
-           (from_id, to_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at, is_read)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+        "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
         (g.current_user_id, target_id, msg_body, msg_type, media_url, thumb_url, burn, created),
     )
-    # 获取插入的消息
-    row = db_query_one("SELECT * FROM direct_messages WHERE id = ?", (msg_id,))
-    msg_dict = direct_msg_to_dict(row)
-
-    # WebSocket 推送
-    online_ids = get_online_user_ids()
-    if target_id in online_ids:
-        push_message(target_id, {
-            "type": "message",
-            "message": msg_dict,
-            "conversation_type": "direct",
-        })
-
+    from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (g.current_user_id,))
+    msg_dict = {
+        "id": str(msg_id),
+        "thread_id": to_uid,
+        "from_uid": from_user["uid"] if from_user else "",
+        "body": msg_body,
+        "msg_type": msg_type,
+        "media_url": media_url,
+        "thumb_url": thumb_url,
+        "duration_ms": burn,
+        "burn_after_seconds": burn,
+        "created_at": created,
+        "is_read": 0,
+        "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+        "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+    }
+    # Push via WebSocket to target user
+    sent = push_to_user(target_id, {"type": "direct_message", "data": msg_dict})
+    if sent == 0:
+        # Not online: add a notification
+        db_execute(
+            "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'message', ?, ?, ?, ?, 0)",
+            (target_id, "新消息", msg_body, json.dumps({"from_uid": from_user["uid"] if from_user else ""}), created),
+        )
     return jsonify({"status": "ok", "message": msg_dict})
 
 @app.route("/v1/direct/read", methods=["POST"])
-def route_direct_read():
-    if auth_err := require_auth():
-        return auth_err
+def direct_read():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     with_uid = (body.get("with_uid") or "").strip().upper()
     if not with_uid:
-        return err("missing with_uid", "missing_uid")
-    target = db_query_one("SELECT id FROM users WHERE uid = ?", (with_uid,))
+        return jsonify({"code": 400, "msg": "missing with_uid"}), 400
+    target = db_query_one("SELECT id, uid FROM users WHERE uid = ?", (with_uid,))
     if not target:
-        return err("user not found", "not_found", 404)
-    target_id = target["id"]
-    me = g.current_user_id
+        return jsonify({"code": 404, "msg": "user not found"}), 404
     db_execute(
         "UPDATE direct_messages SET is_read = 1 WHERE from_id = ? AND to_id = ? AND is_read = 0",
-        (target_id, me),
+        (target["id"], g.current_user_id),
     )
-    # 广播已读回执
-    push_message(target_id, {
-        "type": "read",
-        "thread_uid": db_query_one("SELECT uid FROM users WHERE id = ?", (me,))["uid"],
-        "by_uid": db_query_one("SELECT uid FROM users WHERE id = ?", (me,))["uid"],
-        "read_at": now_ts(),
+    push_to_user(target["id"], {
+        "type": "direct_read",
+        "data": {
+            "thread_id": with_uid,
+            "reader_uid": db_query_one("SELECT uid FROM users WHERE id = ?", (g.current_user_id,))["uid"],
+            "read_at": now_ts(),
+        },
     })
     return jsonify({"status": "ok"})
 
-@app.route("/v1/direct/unread", methods=["POST", "GET"])
-def route_direct_unread():
-    if auth_err := require_auth():
-        return auth_err
+@app.route("/v1/direct/unread", methods=["GET", "POST"])
+def direct_unread():
+    _auth = require_auth()
+    if _auth: return _auth
     limit = min(int(request.args.get("limit", 50) or req_json().get("limit", 50)), 200)
     me = g.current_user_id
-    # 获取每个会话最后一条未读消息
     rows = db_query_all(
-        """SELECT dm.* FROM direct_messages dm
-           WHERE dm.to_id = ? AND dm.is_read = 0
-           ORDER BY dm.created_at DESC
-           LIMIT ?""",
+        """SELECT * FROM direct_messages WHERE to_id = ? AND is_read = 0
+           ORDER BY created_at DESC LIMIT ?""",
         (me, limit),
     )
-    messages = [direct_msg_to_dict(r) for r in rows]
+    messages = []
+    for r in rows:
+        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
+        messages.append({
+            "id": str(r["id"]),
+            "thread_id": from_user["uid"] if from_user else "",
+            "from_uid": from_user["uid"] if from_user else "",
+            "body": r["body"] or "",
+            "msg_type": r["msg_type"] or "text",
+            "media_url": r["media_url"] or "",
+            "thumb_url": r["thumb_url"] or "",
+            "duration_ms": r["burn_after_seconds"] or 0,
+            "created_at": r["created_at"],
+            "is_read": 0,
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+        })
     return jsonify({"messages": messages})
 
-# --- 12. Group Messages ---
+# =========================================================================
+#  Group Messages
+# =========================================================================
+
 @app.route("/v1/groups/messages/v2", methods=["GET"])
-def route_group_messages():
-    if auth_err := require_auth():
-        return auth_err
+def group_messages():
+    _auth = require_auth()
+    if _auth: return _auth
     group_id = (request.args.get("group_id") or "").strip()
     limit = min(int(request.args.get("limit", 50)), 200)
     offset = int(request.args.get("offset", 0))
     if not group_id:
-        return err("missing group_id", "missing_group")
-
-    # 检查是否群成员
-    member = db_query_one(
-        "SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
-        (group_id, g.current_user_id),
-    )
+        return jsonify({"code": 400, "msg": "missing group_id"}), 400
+    member = db_query_one("SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
+                          (group_id, g.current_user_id))
     if not member:
-        return err("not a member", "forbidden", 403)
-
+        return jsonify({"code": 403, "msg": "not a member"}), 403
     rows = db_query_all(
-        """SELECT * FROM (
-            SELECT * FROM group_messages
-            WHERE group_id = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT ? OFFSET ?
-        ) ORDER BY created_at ASC, id ASC""",
+        """SELECT * FROM (SELECT * FROM group_messages WHERE group_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?)
+           ORDER BY created_at ASC, id ASC""",
         (group_id, limit, offset),
     )
-    messages = [group_msg_to_dict(r) for r in rows]
+    messages = []
+    for r in rows:
+        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
+        messages.append({
+            "id": str(r["id"]),
+            "group_id": r["group_id"],
+            "from_uid": from_user["uid"] if from_user else "",
+            "body": r["body"] or "",
+            "msg_type": r["msg_type"] or "text",
+            "media_url": r["media_url"] or "",
+            "thumb_url": r["thumb_url"] or "",
+            "duration_ms": r["burn_after_seconds"] or 0,
+            "created_at": r["created_at"],
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+        })
     return jsonify({"messages": messages})
 
 @app.route("/v1/groups/message/send", methods=["POST"])
-def route_group_send():
-    if auth_err := require_auth():
-        return auth_err
+def group_send():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     group_id = (body.get("group_id") or "").strip()
     msg_body = body.get("body", "") or ""
@@ -1162,221 +1076,690 @@ def route_group_send():
     media_url = body.get("media_url") or ""
     thumb_url = body.get("thumb_url") or ""
     if not group_id:
-        return err("missing group_id", "missing_group")
-
-    member = db_query_one(
-        "SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
-        (group_id, g.current_user_id),
-    )
+        return jsonify({"code": 400, "msg": "missing group_id"}), 400
+    member = db_query_one("SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
+                          (group_id, g.current_user_id))
     if not member:
-        return err("not a member", "forbidden", 403)
-
+        return jsonify({"code": 403, "msg": "not a member"}), 403
     created = now_ts()
     msg_id = db_execute(
-        """INSERT INTO group_messages
-           (group_id, from_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (group_id, g.current_user_id, msg_body, msg_type, media_url, thumb_url, burn, created),
     )
-    row = db_query_one("SELECT * FROM group_messages WHERE id = ?", (msg_id,))
-    msg_dict = group_msg_to_dict(row)
-
-    # 推送给所有在线群成员（排除发送者）
+    from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (g.current_user_id,))
+    msg_dict = {
+        "id": str(msg_id),
+        "group_id": group_id,
+        "from_uid": from_user["uid"] if from_user else "",
+        "body": msg_body,
+        "msg_type": msg_type,
+        "media_url": media_url,
+        "thumb_url": thumb_url,
+        "duration_ms": burn,
+        "burn_after_seconds": burn,
+        "created_at": created,
+        "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+        "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+    }
+    # Push to all other group members online
     members = db_query_all(
         "SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?",
         (group_id, g.current_user_id),
     )
-    online_ids = get_online_user_ids()
     for m in members:
-        if m["user_id"] in online_ids:
-            push_message(m["user_id"], {
-                "type": "message",
-                "message": msg_dict,
-                "conversation_type": "group",
-            })
-
+        push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
     return jsonify({"status": "ok", "message": msg_dict})
 
 @app.route("/v1/groups/read", methods=["POST"])
-def route_group_read():
-    if auth_err := require_auth():
-        return auth_err
+def group_read():
+    _auth = require_auth()
+    if _auth: return _auth
     body = req_json()
     group_id = (body.get("group_id") or "").strip()
     if not group_id:
-        return err("missing group_id", "missing_group")
-    member = db_query_one(
-        "SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
-        (group_id, g.current_user_id),
-    )
-    if not member:
-        return err("not a member", "forbidden", 403)
+        return jsonify({"code": 400, "msg": "missing group_id"}), 400
     return jsonify({"status": "ok"})
 
-@app.route("/v1/groups/unread", methods=["POST", "GET"])
-def route_group_unread():
-    if auth_err := require_auth():
-        return auth_err
+@app.route("/v1/groups/unread", methods=["GET", "POST"])
+def group_unread():
+    _auth = require_auth()
+    if _auth: return _auth
     limit = min(int(request.args.get("limit", 50) or req_json().get("limit", 50)), 200)
     me = g.current_user_id
-    # 获取我所在群组的最新消息（简化版）
     rows = db_query_all(
-        """SELECT gm.* FROM group_messages gm
-           JOIN group_members gmm ON gmm.group_id = gm.group_id
-           WHERE gmm.user_id = ? AND gm.from_id != ?
-           ORDER BY gm.created_at DESC
-           LIMIT ?""",
+        """SELECT gm.* FROM group_messages gm JOIN group_members gmm ON gmm.group_id = gm.group_id
+           WHERE gmm.user_id = ? AND gm.from_id != ? ORDER BY gm.created_at DESC LIMIT ?""",
         (me, me, limit),
     )
-    messages = [group_msg_to_dict(r) for r in rows]
+    messages = []
+    for r in rows:
+        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
+        messages.append({
+            "id": str(r["id"]),
+            "group_id": r["group_id"],
+            "from_uid": from_user["uid"] if from_user else "",
+            "body": r["body"] or "",
+            "msg_type": r["msg_type"] or "text",
+            "media_url": r["media_url"] or "",
+            "thumb_url": r["thumb_url"] or "",
+            "duration_ms": r["burn_after_seconds"] or 0,
+            "created_at": r["created_at"],
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "from_avatar": from_user["avatar_url"] or "" if from_user else "",
+        })
     return jsonify({"messages": messages})
 
-# --- 13. Media Upload & Static ---
+# =========================================================================
+#  Typing Indicator
+# =========================================================================
+
+@app.route("/v1/groups/typing", methods=["POST"])
+def groups_typing():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    group_id = (body.get("group_id") or "").strip()
+    is_typing = bool(body.get("is_typing", False))
+    if not group_id:
+        return jsonify({"code": 400, "msg": "missing group_id"}), 400
+    member = db_query_one("SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
+                          (group_id, g.current_user_id))
+    if not member:
+        return jsonify({"code": 403, "msg": "not a member"}), 403
+    # Save state
+    db_execute(
+        "INSERT OR REPLACE INTO typing_states (chat_id, user_id, is_group, updated_at) VALUES (?, ?, 1, ?)",
+        (group_id, g.current_user_id, now_ts()),
+    )
+    # Push typing state to other group members
+    me_uid = db_query_one("SELECT uid FROM users WHERE id = ?", (g.current_user_id,))["uid"]
+    members = db_query_all(
+        "SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?",
+        (group_id, g.current_user_id),
+    )
+    for m in members:
+        push_to_user(m["user_id"], {
+            "type": "typing",
+            "data": {
+                "chat_id": group_id,
+                "uid": me_uid,
+                "is_group": True,
+                "is_typing": is_typing,
+            },
+        })
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/groups/<group_id>/typing", methods=["GET"])
+def groups_typing_get(group_id):
+    _auth = require_auth()
+    if _auth: return _auth
+    rows = db_query_all(
+        "SELECT user_id FROM typing_states WHERE chat_id = ? AND is_group = 1 AND updated_at > ?",
+        (group_id, now_ts() - 10),
+    )
+    users = []
+    for r in rows:
+        u = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["user_id"],))
+        if u:
+            users.append({
+                "uid": u["uid"],
+                "display_name": u["display_name"] or u["uid"],
+                "avatar_url": u["avatar_url"] or "",
+                "is_typing": True,
+            })
+    return jsonify({"users": users})
+
+@app.route("/v1/chats/<uid>/typing", methods=["POST"])
+def chats_typing_post(uid):
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    is_typing = bool(body.get("is_typing", False))
+    target = db_query_one("SELECT id, uid FROM users WHERE uid = ?", (uid.upper(),))
+    if not target:
+        return jsonify({"code": 404, "msg": "user not found"}), 404
+    chat_id = "%s-%s" % tuple(sorted([str(g.current_user_id), str(target["id"])]))
+    db_execute(
+        "INSERT OR REPLACE INTO typing_states (chat_id, user_id, is_group, updated_at) VALUES (?, ?, 0, ?)",
+        (chat_id, g.current_user_id, now_ts()),
+    )
+    me_uid = db_query_one("SELECT uid FROM users WHERE id = ?", (g.current_user_id,))["uid"]
+    push_to_user(target["id"], {
+        "type": "typing",
+        "data": {
+            "chat_id": uid,
+            "uid": me_uid,
+            "is_group": False,
+            "is_typing": is_typing,
+        },
+    })
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/chats/<uid>/typing", methods=["GET"])
+def chats_typing_get(uid):
+    _auth = require_auth()
+    if _auth: return _auth
+    target = db_query_one("SELECT id, uid FROM users WHERE uid = ?", (uid.upper(),))
+    if not target:
+        return jsonify({"users": []})
+    chat_id = "%s-%s" % tuple(sorted([str(g.current_user_id), str(target["id"])]))
+    rows = db_query_all(
+        "SELECT user_id FROM typing_states WHERE chat_id = ? AND is_group = 0 AND updated_at > ?",
+        (chat_id, now_ts() - 10),
+    )
+    users = []
+    for r in rows:
+        if r["user_id"] == g.current_user_id:
+            continue
+        u = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["user_id"],))
+        if u:
+            users.append({
+                "uid": u["uid"],
+                "display_name": u["display_name"] or u["uid"],
+                "avatar_url": u["avatar_url"] or "",
+                "is_typing": True,
+            })
+    return jsonify({"users": users})
+
+# =========================================================================
+#  Notifications
+# =========================================================================
+
+@app.route("/v1/notifications", methods=["GET"])
+def notifications_get():
+    _auth = require_auth()
+    if _auth: return _auth
+    limit = min(int(request.args.get("limit", 100)), 200)
+    rows = db_query_all(
+        "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+        (g.current_user_id, limit),
+    )
+    notifs = []
+    for r in rows:
+        n = {
+            "id": str(r["id"]),
+            "type": r["type"] or "system",
+            "title": r["title"] or "",
+            "body": r["body"] or "",
+            "created_at": r["created_at"],
+            "is_read": 1 if r["is_read"] else 0,
+        }
+        if r["extra_json"]:
+            try:
+                extra = json.loads(r["extra_json"])
+                n.update(extra)
+            except Exception:
+                pass
+        notifs.append(n)
+    return jsonify({"notifications": notifs})
+
+@app.route("/v1/notifications/read", methods=["POST"])
+def notifications_read():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    nid = body.get("id")
+    if nid:
+        try:
+            nid_int = int(nid)
+            db_execute("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?", (nid_int, g.current_user_id))
+        except Exception:
+            pass
+    else:
+        db_execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (g.current_user_id,))
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/notifications", methods=["POST"])
+def notifications_post():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    title = body.get("title") or ""
+    text = body.get("body") or body.get("text") or ""
+    ntype = body.get("type") or "system"
+    db_execute(
+        "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        (g.current_user_id, ntype, title, text, json.dumps({}), now_ts()),
+    )
+    return jsonify({"status": "ok"})
+
+# =========================================================================
+#  Moments (朋友圈 / 动态)
+# =========================================================================
+
+@app.route("/v1/moments/user", methods=["GET"])
+def moments_user():
+    _auth = require_auth()
+    if _auth: return _auth
+    uid = (request.args.get("uid") or "").strip().upper()
+    limit = min(int(request.args.get("limit", 20)), 200)
+    user_id = None
+    if uid:
+        u = db_query_one("SELECT id FROM users WHERE uid = ?", (uid,))
+        if u:
+            user_id = u["id"]
+    if not user_id:
+        user_id = g.current_user_id
+    rows = db_query_all(
+        "SELECT * FROM moments WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+        (user_id, limit),
+    )
+    moments = []
+    for r in rows:
+        author = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["user_id"],))
+        likes_count = db_query_one("SELECT COUNT(*) AS c FROM moment_likes WHERE moment_id = ?", (r["moment_id"],))
+        comments_count = db_query_one("SELECT COUNT(*) AS c FROM moment_comments WHERE moment_id = ?", (r["moment_id"],))
+        moments.append({
+            "moment_id": r["moment_id"],
+            "uid": author["uid"] if author else "",
+            "author_name": (author["display_name"] or author["uid"]) if author else "",
+            "author_avatar": author["avatar_url"] or "" if author else "",
+            "body": r["body"] or "",
+            "media_url": r["media_url"] or "",
+            "thumb_url": r["thumb_url"] or "",
+            "created_at": r["created_at"],
+            "likes": likes_count["c"] if likes_count else 0,
+            "comments": comments_count["c"] if comments_count else 0,
+        })
+    return jsonify({"moments": moments})
+
+@app.route("/v1/moments", methods=["POST"])
+def moments_create():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    text = body.get("body") or ""
+    media_url = body.get("media_url") or ""
+    thumb_url = body.get("thumb_url") or ""
+    if not text and not media_url:
+        return jsonify({"code": 400, "msg": "empty moment"}), 400
+    moment_id = gen_moment_id()
+    created = now_ts()
+    db_execute(
+        "INSERT INTO moments (moment_id, user_id, body, media_url, thumb_url, created_at, likes) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        (moment_id, g.current_user_id, text, media_url, thumb_url, created),
+    )
+    return jsonify({"moment_id": moment_id, "body": text, "media_url": media_url, "created_at": created})
+
+@app.route("/v1/moments/timeline", methods=["GET"])
+def moments_timeline():
+    _auth = require_auth()
+    if _auth: return _auth
+    limit = min(int(request.args.get("limit", 50)), 200)
+    me = g.current_user_id
+    # My moments + friends' moments
+    rows = db_query_all(
+        """SELECT m.* FROM moments m WHERE m.user_id = ? OR m.user_id IN (
+            SELECT CASE WHEN f.user_id = ? THEN f.friend_id ELSE f.user_id END
+            FROM friendships f WHERE f.status = 'accepted' AND (f.user_id = ? OR f.friend_id = ?)
+        ) ORDER BY m.created_at DESC LIMIT ?""",
+        (me, me, me, me, limit),
+    )
+    moments = []
+    for r in rows:
+        author = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["user_id"],))
+        lc = db_query_one("SELECT COUNT(*) AS c FROM moment_likes WHERE moment_id = ?", (r["moment_id"],))
+        cc = db_query_one("SELECT COUNT(*) AS c FROM moment_comments WHERE moment_id = ?", (r["moment_id"],))
+        moments.append({
+            "moment_id": r["moment_id"],
+            "uid": author["uid"] if author else "",
+            "author_name": (author["display_name"] or author["uid"]) if author else "",
+            "author_avatar": author["avatar_url"] or "" if author else "",
+            "body": r["body"] or "",
+            "media_url": r["media_url"] or "",
+            "thumb_url": r["thumb_url"] or "",
+            "created_at": r["created_at"],
+            "likes": lc["c"] if lc else 0,
+            "comments": cc["c"] if cc else 0,
+        })
+    return jsonify({"moments": moments})
+
+@app.route("/v1/moments/like", methods=["POST"])
+def moments_like():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    moment_id = (body.get("moment_id") or "").strip()
+    if not moment_id:
+        return jsonify({"code": 400, "msg": "missing moment_id"}), 400
+    try:
+        db_execute("INSERT INTO moment_likes (moment_id, user_id, created_at) VALUES (?, ?, ?)",
+                   (moment_id, g.current_user_id, now_ts()))
+    except Exception:
+        pass
+    db_execute("UPDATE moments SET likes = (SELECT COUNT(*) FROM moment_likes WHERE moment_id = ?) WHERE moment_id = ?",
+               (moment_id, moment_id))
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/moments/unlike", methods=["POST"])
+def moments_unlike():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    moment_id = (body.get("moment_id") or "").strip()
+    if not moment_id:
+        return jsonify({"code": 400, "msg": "missing moment_id"}), 400
+    db_execute("DELETE FROM moment_likes WHERE moment_id = ? AND user_id = ?", (moment_id, g.current_user_id))
+    db_execute("UPDATE moments SET likes = (SELECT COUNT(*) FROM moment_likes WHERE moment_id = ?) WHERE moment_id = ?",
+               (moment_id, moment_id))
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/moments/comments", methods=["GET"])
+def moments_comments():
+    _auth = require_auth()
+    if _auth: return _auth
+    moment_id = request.args.get("moment_id", "").strip()
+    limit = min(int(request.args.get("limit", 50)), 200)
+    if not moment_id:
+        return jsonify({"code": 400, "msg": "missing moment_id"}), 400
+    rows = db_query_all(
+        "SELECT * FROM moment_comments WHERE moment_id = ? ORDER BY created_at ASC LIMIT ?",
+        (moment_id, limit),
+    )
+    comments = []
+    for r in rows:
+        u = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["user_id"],))
+        comments.append({
+            "id": str(r["id"]),
+            "moment_id": r["moment_id"],
+            "uid": u["uid"] if u else "",
+            "name": (u["display_name"] or u["uid"]) if u else "",
+            "avatar": u["avatar_url"] or "" if u else "",
+            "body": r["body"] or "",
+            "created_at": r["created_at"],
+        })
+    return jsonify({"comments": comments})
+
+@app.route("/v1/moments/comment", methods=["POST"])
+def moments_comment():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    moment_id = (body.get("moment_id") or "").strip()
+    text = body.get("body") or body.get("text") or ""
+    if not moment_id or not text:
+        return jsonify({"code": 400, "msg": "missing moment_id or body"}), 400
+    cid = db_execute("INSERT INTO moment_comments (moment_id, user_id, body, created_at) VALUES (?, ?, ?, ?)",
+                     (moment_id, g.current_user_id, text, now_ts()))
+    return jsonify({"status": "ok", "comment_id": str(cid)})
+
+@app.route("/v1/moments/comment/delete", methods=["POST"])
+def moments_comment_delete():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    cid = body.get("comment_id") or body.get("id")
+    try:
+        cid_int = int(cid)
+    except Exception:
+        return jsonify({"code": 400, "msg": "invalid comment_id"}), 400
+    db_execute("DELETE FROM moment_comments WHERE id = ? AND user_id = ?", (cid_int, g.current_user_id))
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/moments/delete", methods=["POST"])
+def moments_delete():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    moment_id = (body.get("moment_id") or "").strip()
+    if not moment_id:
+        return jsonify({"code": 400, "msg": "missing moment_id"}), 400
+    db_execute("DELETE FROM moments WHERE moment_id = ? AND user_id = ?", (moment_id, g.current_user_id))
+    db_execute("DELETE FROM moment_likes WHERE moment_id = ?", (moment_id,))
+    db_execute("DELETE FROM moment_comments WHERE moment_id = ?", (moment_id,))
+    return jsonify({"status": "ok"})
+
+# =========================================================================
+#  Media Upload & Static
+# =========================================================================
+
 @app.route("/v1/media", methods=["POST"])
-def route_upload_media():
-    if auth_err := require_auth():
-        return auth_err
+def upload_media():
+    _auth = require_auth()
+    if _auth: return _auth
     if "file" not in request.files:
-        return err("no file", "no_file")
+        return jsonify({"code": 400, "msg": "no file"}), 400
     f = request.files["file"]
     if not f or f.filename == "":
-        return err("empty file", "empty_file")
+        return jsonify({"code": 400, "msg": "empty file"}), 400
     ext = os.path.splitext(f.filename)[1].lower()
     filename = secrets.token_hex(16) + ext
     filepath = os.path.join(MEDIA_DIR, filename)
     f.save(filepath)
-    url = f"/media/{filename}"
+    url = "/media/" + filename
     return jsonify({"url": url, "media_url": url, "thumb_url": url, "filename": filename})
 
+@app.route("/v1/files/upload", methods=["POST"])
+def upload_file():
+    return upload_media()
+
+@app.route("/v1/files/download", methods=["GET"])
+def download_file():
+    filename = request.args.get("name", "")
+    if not filename or ".." in filename or "/" in filename:
+        return jsonify({"code": 400, "msg": "invalid filename"}), 400
+    # Search in media and uploads directories
+    for d in [MEDIA_DIR, UPLOAD_DIR]:
+        fp = os.path.join(d, filename)
+        if os.path.exists(fp):
+            return send_from_directory(d, filename, as_attachment=True)
+    return jsonify({"code": 404, "msg": "not found"}), 404
+
 @app.route("/media/<path:filename>", methods=["GET"])
-def route_serve_media(filename):
+def serve_media(filename):
     return send_from_directory(MEDIA_DIR, filename)
 
-@app.route("/", methods=["GET"])
-def route_root():
+# =========================================================================
+#  Update check
+# =========================================================================
+
+@app.route("/update/update.json", methods=["GET"])
+def update_check():
     return jsonify({
-        "service": "oldchat-compat",
-        "status": "ok",
-        "endpoints": [
-            "/v1/auth/handshake", "/v1/auth/login", "/v1/auth/register", "/v1/auth/refresh",
-            "/v1/me", "/v1/users/profile",
-            "/v1/friends", "/v1/friends/request", "/v1/friends/requests", "/v1/friends/respond",
-            "/v1/groups/list", "/v1/groups/create", "/v1/groups/join", "/v1/groups/members",
-            "/v1/direct/messages/v2", "/v1/direct/send", "/v1/direct/read", "/v1/direct/unread",
-            "/v1/groups/messages/v2", "/v1/groups/message/send", "/v1/groups/read", "/v1/groups/unread",
-            "/v1/media", "/media/<filename>",
-        ],
-        "websocket": "/ws",
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "version_code": 1,
+        "min_version": "1.0.0",
+        "min_version_code": 1,
+        "title": "旧聊 OldChat",
+        "body": "这是一个兼容旧聊协议的服务器实现",
+        "download_url": "",
+        "force_update": False,
     })
 
-# --- 14. WebSocket Handler ---
+# =========================================================================
+#  Root + Echo
+# =========================================================================
+
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({
+        "service": APP_NAME,
+        "version": APP_VERSION,
+        "status": "ok",
+        "endpoints": {
+            "auth": ["/v1/auth/handshake", "/v1/auth/login", "/v1/auth/register", "/v1/auth/refresh"],
+            "user": ["/v1/me", "/v1/me/profile", "/v1/users/profile"],
+            "friends": ["/v1/friends", "/v1/friends/request", "/v1/friends/requests", "/v1/friends/respond"],
+            "groups": ["/v1/groups/list", "/v1/groups/create", "/v1/groups/join", "/v1/groups/leave",
+                       "/v1/groups/members", "/v1/groups/typing"],
+            "direct": ["/v1/direct/messages/v2", "/v1/direct/send", "/v1/direct/read", "/v1/direct/unread"],
+            "group_messages": ["/v1/groups/messages/v2", "/v1/groups/message/send", "/v1/groups/read", "/v1/groups/unread"],
+            "notifications": ["/v1/notifications"],
+            "moments": ["/v1/moments", "/v1/moments/user", "/v1/moments/timeline",
+                        "/v1/moments/like", "/v1/moments/unlike", "/v1/moments/comments"],
+            "media": ["/v1/media", "/v1/files/upload", "/v1/files/download", "/media/<filename>"],
+            "ws": "/v1/ws?token=<access_token>&sid=<session_id>",
+        },
+    })
+
+# =========================================================================
+#  WebSocket handler (/v1/ws)
+# =========================================================================
+
 if HAS_EVENTLET:
     @WebSocketWSGI
     def ws_handler(ws):
         user_id = None
-        auth_done = False
-        # 先尝试从 query 参数获取 token
-        env = getattr(ws, "environ", {}) or {}
-        query_string = env.get("QUERY_STRING", "")
-        query_token = None
-        for part in query_string.split("&"):
-            if part.startswith("token="):
-                query_token = part[6:]
-                break
+        token_from_q = None
+        sid_from_q = None
+        env = getattr(ws, "environ", {})
+        query = env.get("QUERY_STRING", "") if isinstance(env, dict) else ""
+        for part in query.split("&"):
+            if part.startswith("token=") and not token_from_q:
+                token_from_q = part[6:]
+            elif part.startswith("sid=") and not sid_from_q:
+                sid_from_q = part[4:]
 
-        if query_token:
-            row = db_query_one(
-                "SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
-                (query_token, int(time.time())),
-            )
+        # First try query-based auth
+        if token_from_q:
+            row = db_query_one("SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
+                               (token_from_q, now_ts()))
             if row:
                 user_id = row["user_id"]
-                auth_done = True
-                register_ws(user_id, ws)
-                try:
-                    user_row = db_query_one("SELECT uid, display_name FROM users WHERE id = ?", (user_id,))
-                    ws.send(json.dumps({
-                        "type": "connected",
-                        "user_id": user_row["uid"] if user_row else user_id,
-                        "online": 1,
-                    }, ensure_ascii=False))
-                except Exception:
-                    pass
-                broadcast_presence(user_id, True)
+        # Fallback: wait for first message as auth
+        if not user_id:
+            try:
+                first = ws.wait()
+                if isinstance(first, str) and first.strip():
+                    try:
+                        data = json.loads(first)
+                        token = data.get("token") or data.get("access_token")
+                        if token:
+                            row = db_query_one(
+                                "SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
+                                (token, now_ts()),
+                            )
+                            if row:
+                                user_id = row["user_id"]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
-        # 持续处理消息
+        if not user_id:
+            try:
+                ws.send(json.dumps({"type": "error", "message": "authentication required"}))
+            except Exception:
+                pass
+            return
+
+        # Register connection
+        register_ws(user_id, ws)
         try:
+            me = db_query_one("SELECT uid, display_name FROM users WHERE id = ?", (user_id,))
+            ws.send(json.dumps({
+                "type": "connected",
+                "uid": me["uid"] if me else "",
+                "display_name": me["display_name"] if me else "",
+                "online": 1,
+            }, ensure_ascii=False))
+        except Exception:
+            pass
+
+        # Heartbeat & presence broadcast
+        try:
+            # Notify friends this user is online
+            friends = db_query_all(
+                """SELECT u.id FROM users u JOIN friendships f ON
+                   (f.user_id = u.id AND f.friend_id = ? AND f.status = 'accepted') OR
+                   (f.friend_id = u.id AND f.user_id = ? AND f.status = 'accepted')
+                   WHERE u.id != ?""",
+                (user_id, user_id, user_id),
+            )
+            me2 = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (user_id,))
+            for f in friends:
+                push_to_user(f["id"], {
+                    "type": "presence",
+                    "data": {
+                        "uid": me2["uid"] if me2 else "",
+                        "display_name": (me2["display_name"] or me2["uid"]) if me2 else "",
+                        "avatar_url": me2["avatar_url"] or "" if me2 else "",
+                        "online": 1,
+                    },
+                })
+
+            # Read loop
             while True:
                 msg = ws.wait()
                 if msg is None:
                     break
+                if not isinstance(msg, str):
+                    continue
                 try:
                     data = json.loads(msg)
                 except Exception:
                     continue
                 mtype = data.get("type")
-                if mtype == "auth" and not auth_done:
-                    token = data.get("token", "")
-                    row = db_query_one(
-                        "SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
-                        (token, int(time.time())),
-                    )
-                    if row:
-                        user_id = row["user_id"]
-                        auth_done = True
-                        register_ws(user_id, ws)
-                        try:
-                            user_row = db_query_one("SELECT uid FROM users WHERE id = ?", (user_id,))
-                            ws.send(json.dumps({
-                                "type": "connected",
-                                "user_id": user_row["uid"] if user_row else user_id,
-                            }, ensure_ascii=False))
-                        except Exception:
-                            pass
-                        broadcast_presence(user_id, True)
-                elif mtype == "ping":
+                if mtype == "ping":
                     try:
-                        ws.send(json.dumps({"type": "pong", "ts": int(time.time())}))
+                        ws.send(json.dumps({"type": "pong", "ts": now_ts()}))
                     except Exception:
                         break
                 elif mtype == "keepalive":
                     pass
+                elif mtype == "echo":
+                    try:
+                        ws.send(msg)
+                    except Exception:
+                        break
         except Exception:
             pass
         finally:
-            if user_id:
-                unregister_ws(user_id, ws)
-                broadcast_presence(user_id, False)
+            unregister_ws(user_id, ws)
+            # Notify friends offline
+            me3 = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (user_id,))
+            for f in friends:
+                push_to_user(f["id"], {
+                    "type": "presence",
+                    "data": {
+                        "uid": me3["uid"] if me3 else "",
+                        "display_name": (me3["display_name"] or me3["uid"]) if me3 else "",
+                        "avatar_url": me3["avatar_url"] or "" if me3 else "",
+                        "online": 0,
+                    },
+                })
 
+    # WSGI dispatch
     def dispatch(environ, start_response):
         path = environ.get("PATH_INFO", "")
-        if path == "/ws":
+        if path == "/v1/ws":
             return ws_handler(environ, start_response)
         return app(environ, start_response)
 else:
     def dispatch(environ, start_response):
         path = environ.get("PATH_INFO", "")
-        if path == "/ws":
+        if path == "/v1/ws":
             start_response("501 Not Implemented", [("Content-Type", "application/json")])
-            return [b'{"error":"websocket not available","hint":"install eventlet"}']
-    dispatch = None  # type: ignore
+            return [b'{"code":501,"msg":"websocket unavailable: install eventlet"}']
+        return app(environ, start_response)
 
-# --- 15. Main ---
-def _bootstrap():
+# =========================================================================
+#  Main entry
+# =========================================================================
+
+_bootstrap_done = False
+
+def bootstrap():
+    global _bootstrap_done
+    if _bootstrap_done:
+        return
     init_db()
-    logging.info(f"[init] DB: {DB_PATH}")
-    logging.info(f"[init] Media: {MEDIA_DIR}")
-    logging.info(f"[init] WebSocket: {'eventlet' if HAS_EVENTLET else 'UNAVAILABLE'}")
+    _bootstrap_done = True
 
 if __name__ == "__main__":
-    _bootstrap()
+    init_db()
+    log.info("DB: %s", DB_PATH)
+    log.info("Media dir: %s", MEDIA_DIR)
+    log.info("WebSocket: enabled (eventlet=%s)", HAS_EVENTLET)
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
-    print(f"\nOldChat 兼容服务器启动: http://{host}:{port}")
-    print(f"WebSocket: ws://{host}:{port}/ws")
+    print("\nOldChat 兼容服务器已启动: http://%s:%d" % (host, port))
+    print("WebSocket 路径: ws://%s:%d/v1/ws?token=<access_token>&sid=<session_id>" % (host, port))
+    print("注: eventlet monkey_patch 在文件最顶部执行，以避免 Werkzeug context 冲突\n")
     if HAS_EVENTLET:
-        eventlet_wsgi.server(eventlet.listen((host, port)), dispatch)
+        eventlet.wsgi.server(eventlet.listen((host, port)), dispatch, log_output=False)
     else:
         app.run(host=host, port=port, debug=False, threaded=True)
 else:
-    _bootstrap()
+    init_db()
