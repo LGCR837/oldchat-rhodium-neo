@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>OldChat for Kivotos</title>
+    <link rel="icon" href="/static/momotalklogo.png" type="image/png">
+
+    <script>
+        var WALLPAPER_BASE = '{{ url_for('static', filename='arona_wallpaper/') }}';
+    </script>
+    <script src="{{ url_for('static', filename='arona_wallpaper/lib/spine-webgl.js') }}"></script>
+
+    <style>
+        @font-face {
+            font-family: 'zyyt';
+            src: url('/static/zyyt.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { margin: 0; font-family: 'zyyt', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; overflow: hidden; background: #eef2f5; }
+        #wallpaper-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+        #wallpaper-bg canvas { display: block; width: 100%; height: 100%; }
+        #textbox { display: none !important; }
+        .login-wrapper { position: relative; z-index: 10; display: flex; justify-content: flex-end; align-items: center; min-height: 100vh; padding: 20px 80px 20px 20px; pointer-events: none; }
+        @media (max-width: 640px) { .login-wrapper { justify-content: center; padding: 20px; } }
+        .login-card { pointer-events: auto; background: white; padding: 2rem 2rem 2.2rem 2rem; border-radius: 20px; box-shadow: 0 12px 28px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.04); width: 100%; max-width: 380px; transition: all 0.2s; text-align: left; }
+        .login-card h1 { margin-bottom: 0.35rem; font-weight: 500; font-size: 1.8rem; color: #1f2a3e; letter-spacing: -0.3px; }
+        .greeting { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: #5a6874; margin-bottom: 1.8rem; border-left: 3px solid #b0c4de; padding-left: 12px; font-weight: 400; }
+        .arona-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,0.1); background: #eef2ff; }
+        .greeting-text { flex: 1; }
+        .form-group { margin-bottom: 1.25rem; }
+        .login-card input { width: 100%; padding: 12px 16px; border: 1px solid #cfdde6; border-radius: 14px; font-size: 0.95rem; font-family: 'zyyt', inherit; background-color: #fff; transition: 0.2s; outline: none; color: #1e2a3e; }
+        .login-card input:focus { border-color: #0078d4; box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.15); }
+        .login-card input::placeholder { color: #9aaebf; font-weight: 400; font-size: 0.9rem; }
+        .login-card button { width: 100%; padding: 12px 16px; background: #0078d4; color: white; border: none; border-radius: 40px; font-size: 1rem; font-weight: 500; cursor: pointer; transition: background 0.2s, transform 0.05s; margin-top: 6px; letter-spacing: 0.3px; }
+        .login-card button:hover { background: #106ebe; }
+        .login-card button:active { transform: scale(0.98); }
+        .error { background: #fff5f5; color: #c23d3d; padding: 10px 14px; border-radius: 14px; font-size: 0.85rem; margin-bottom: 1.25rem; border-left: 3px solid #c23d3d; font-weight: 500; }
+        .checkbox-group { display: flex; align-items: center; gap: 10px; margin: 0.5rem 0 1rem 0; justify-content: flex-start; text-align: left; }
+        .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: #0078d4; flex-shrink: 0; }
+        .checkbox-group label { font-size: 0.9rem; color: #2c3e4e; cursor: pointer; user-select: none; font-weight: 450; }
+        .extra-note { text-align: center; margin-top: 1.5rem; font-size: 0.7rem; color: #94a3b8; border-top: 1px solid #eaedf0; padding-top: 1rem; }
+        @media (max-width: 480px) {
+          .login-card { padding: 1.6rem 1.5rem 1.9rem; }
+          .login-card h1 { font-size: 1.6rem; }
+          .arona-avatar { width: 32px; height: 32px; }
+          .checkbox-group label { font-size: 0.85rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 阿罗娜动态壁纸背景 -->
+    <div id="wallpaper-bg">
+        <div id="textbox" class="textbox"></div>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <!-- 登录卡片 -->
+    <div class="login-wrapper">
+        <div class="login-card">
+            <h1>OldChat for Kivotos</h1>
+            <div class="greeting">
+                <span class="greeting-text">Sensei 欢迎回来，等你很久啦</span>
+            </div>
+
+            {% if error %}
+                <p class="error">{{ error }}</p>
+            {% endif %}
+
+            <form method="POST" id="loginForm">
+                <div class="form-group">
+                    <input type="text" name="identifier" id="identifier" placeholder="账号 / 邮箱 / UID" required autofocus>
+                </div>
+                <div class="form-group">
+                    <input type="password" name="password" id="password" placeholder="密码" required>
+                </div>
+                <div class="checkbox-group" style="display: flex; justify-content: space-between; align-items: center; margin: 0.5rem 0 1rem 0;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <input type="checkbox" id="rememberAccountCheckbox">
+                        <label for="rememberAccountCheckbox">记住账户</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <input type="checkbox" id="useEncryptionCheckbox" name="use_encryption" checked>
+                        <label for="useEncryptionCheckbox" title="使用加密接口进行通讯">加密握手</label>
+                    </div>
+                </div>
+                <button type="submit">进入什亭之箱</button>
+            </form>
+
+            <div class="extra-note" style="text-align: center; margin-top: 1.5rem; font-size: 0.7rem; color: #94a3b8;">
+                OldChat for Kivotos
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. 最后加载壁纸主逻辑 -->
+    <script src="{{ url_for('static', filename='arona_wallpaper/js/main.js') }}"></script>
+
+    <!-- 3. 保留你原来的记住账户脚本 -->
+    <script>
+        (function autoFillCredentials() {
+            try {
+                const savedId = localStorage.getItem('savedIdentifier');
+                const savedPwd = localStorage.getItem('savedPassword');
+                if (savedId) document.getElementById('identifier').value = savedId;
+                if (savedPwd) document.getElementById('password').value = savedPwd;
+                const checkbox = document.getElementById('rememberAccountCheckbox');
+                if (checkbox && (savedId || savedPwd)) checkbox.checked = true;
+            } catch(e) {}
+        })();
+
+        const form = document.getElementById('loginForm');
+        if (form) {
+            form.addEventListener('submit', function(evt) {
+                const rememberCheck = document.getElementById('rememberAccountCheckbox');
+                if (rememberCheck && rememberCheck.checked) {
+                    try {
+                        localStorage.setItem('savedIdentifier', document.getElementById('identifier').value);
+                        localStorage.setItem('savedPassword', document.getElementById('password').value);
+                    } catch(e) {}
+                }
+            });
+        }
+    </script>
+</body>
+</html>

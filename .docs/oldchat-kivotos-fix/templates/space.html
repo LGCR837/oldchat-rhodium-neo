@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ user.get('display_name', user.get('uid')) }} 的空间</title>
+    <link rel="icon" href="/static/momotalklogo.png" type="image/png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='space.css') }}">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
+</head>
+<body>
+    <div class="space-card">
+        <!-- 头像与基本信息 -->
+        <div class="profile-header">
+            <img class="profile-avatar" 
+                 src="{{ user.get('avatar_url') or url_for('static', filename='default-avatar.png') }}"
+                 alt="头像" 
+                 onerror="this.onerror=null;this.src='{{ url_for('static', filename='default-avatar.png') }}';">
+            <div class="profile-names">
+                <h1>{{ user.get('display_name') or user.get('username') or user.get('uid') }}</h1>
+                <p class="text-secondary">UID: {{ user.get('uid', '未知') }}</p>
+            </div>
+        </div>
+
+        {% if is_owner %}
+        <div class="divider"></div>
+        <!-- 发布动态（仅自己可见） -->
+        <div class="post-moment">
+            <textarea id="momentInput" rows="2" placeholder="说点什么吧..." style="width:100%; padding:8px; border-radius:8px; border:1px solid #e0e0e0; font-family:inherit; resize:vertical;"></textarea>
+            <button class="back-button" id="postMomentBtn" style="margin-top:8px;">发布</button>
+        </div>
+        {% endif %}
+
+        <div class="divider"></div>
+
+        <!-- 精简信息区 -->
+        {% if user.get('signature') %}
+        <div class="info-row">
+            <span>{{ user.get('signature') }}</span>
+        </div>
+        {% endif %}
+
+        <div class="info-row small">
+            <span>{% if user.get('is_online') %}<i class="fas fa-circle" style="color:#22c55e; font-size:0.6rem; margin-right:4px;"></i> 在线{% else %}离线{% endif %}{% if user.get('presence_status') %} · {{ user.get('presence_status') }}{% endif %}</span>
+            {% if user.get('user_title') %}
+            <span>{{ user.get('user_title') }}</span>
+            {% endif %}
+        </div>
+
+        {% if user.get('cover_url') %}
+        <div class="info-row">
+            <img src="{{ user.get('cover_url') }}" alt="封面" style="width:100%; border-radius:8px;">
+        </div>
+        {% endif %}
+
+        <!-- 最近动态 -->
+        {% if moments %}
+        <div class="divider"></div>
+        <div class="moments-section">
+            {% for moment in moments %}
+            <div class="moment-item">
+                <div class="moment-header">
+                    <span class="moment-name">{{ moment.get('from_name', moment.get('from_uid', '')) }}</span>
+                    <span class="moment-time">{{ moment.get('created_at') | int | datetimeformat }}</span>
+                </div>
+                <div class="moment-body">{{ moment.get('body', '') }}</div>
+                {% if moment.get('image_url') %}
+                <img class="moment-image" src="{{ moment.get('image_url') }}" alt="动态图片">
+                {% endif %}
+                <div class="moment-footer">
+                    <span><i class="far fa-heart"></i> {{ moment.get('likes', 0) }}</span>
+                    <span><i class="far fa-comment"></i> {{ moment.get('comments', 0) }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% elif is_owner %}
+        <div class="empty-hint">还没有发过动态</div>
+        {% endif %}
+
+        <button class="back-button" onclick="window.location.href='/'">返回聊天</button>
+        <div class="extra-note">OldChat for Kivotos</div>
+    </div>
+
+    {% if is_owner %}
+    <script>
+        document.getElementById('postMomentBtn').addEventListener('click', () => {
+            const body = document.getElementById('momentInput').value.trim();
+            if (!body) return alert('请输入内容');
+            fetch('/api/moments/post', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({body: body})
+            }).then(r => r.json()).then(res => {
+                if (res.error) alert(res.error);
+                else {
+                    alert('发布成功');
+                    document.getElementById('momentInput').value = '';
+                    location.reload();
+                }
+            });
+        });
+    </script>
+    {% endif %}
+</body>
+</html>
