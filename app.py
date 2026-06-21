@@ -60,6 +60,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL DEFAULT '',
             password_hash TEXT NOT NULL,
             nickname TEXT DEFAULT '',
             avatar_url TEXT DEFAULT '',
@@ -250,6 +251,12 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_moments_user ON moments(user_id)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_friends_user ON friends(user_id)')
+    
+    # 数据库迁移 - 确保旧数据库有新增字段
+    try:
+        db.execute('ALTER TABLE users ADD COLUMN email TEXT UNIQUE NOT NULL DEFAULT ""')
+    except sqlite3.OperationalError:
+        pass  # 字段已存在
     
     db.commit()
     print("[OldChat Server] 数据库初始化完成")
@@ -1441,6 +1448,301 @@ def api_system_ping():
     return success_response({
         "pong": get_timestamp(),
         "uptime": time.time() - start_time
+    })
+
+# ============ V1 API 路由 (兼容 OldChat 客户端) / V1 API Routes ============
+
+@app.route('/v1/auth/register', methods=['POST'])
+def v1_auth_register():
+    """用户注册 - V1版本"""
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    email = data.get('email', '').strip()
+    password = data.get('password', '')
+    captcha_text = data.get('captcha', '')  # 文字验证码
+    captcha_email = data.get('captcha_email', '')  # 邮箱验证码
+    nickname = data.get('nickname', username)
+    
+    # 验证必填参数
+    if not username or not password:
+        return jsonify({"code": 400, "message": "用户名和密码不能为空"})
+    
+    if len(username) < 3 or len(username) > 32:
+        return jsonify({"code": 400, "message": "用户名长度需在3-32之间"})
+    
+    if len(password) < 6:
+        return jsonify({"code": 400, "message": "密码长度需至少6位"})
+    
+    # 验证码可以乱填（按要求跳过验证）
+    # if not captcha_text or not captcha_email:
+    #     return jsonify({"code": 400, "message": "验证码不能为空"})
+    
+    db = get_db()
+    
+    # 检查用户是否已存在
+    existing = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+    if existing:
+        return jsonify({"code": 400, "message": "用户名已存在"})
+    
+    # 检查邮箱是否已被使用（如果提供了邮箱）
+    if email:
+        existing_email = db.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+        if existing_email:
+            return jsonify({"code": 400, "message": "邮箱已被使用"})
+    
+    # 创建用户
+    password_hash = hash_password(password)
+    token = generate_token()
+    token_expire = get_timestamp() + app.config['TOKEN_EXPIRY']
+    
+    cursor = db.execute('''
+        INSERT INTO users (username, email, password_hash, nickname, token, token_expire, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (username, email, password_hash, nickname, token, token_expire, get_timestamp()))
+    db.commit()
+    
+    user_id = cursor.lastrowid
+    
+    # 生成ECDH密钥对
+    if HAS_CRYPTO:
+        private_key, public_key = generate_ecdh_keypair()
+        private_pem = get_private_key_pem(private_key)
+        public_pem = get_public_key_pem(public_key)
+        db.execute('UPDATE users SET ecdh_private_key = ?, public_key = ? WHERE id = ?',
+                   (private_pem, public_pem, user_id))
+        db.commit()
+    else:
+        public_pem = "DEMO_PUBLIC_KEY"
+    
+    return jsonify({
+        "code": 0,
+        "message": "注册成功",
+        "data": {
+            "user_id": user_id,
+            "username": username,
+            "nickname": nickname,
+            "email": email,
+            "token": token,
+            "public_key": public_pem
+        }
+    })
+
+@app.route('/v1/auth/login', methods=['POST'])
+def v1_auth_login():
+    """用户登录 - V1版本"""
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    
+    if not username or not password:
+        return jsonify({"code": 400, "message": "用户名和密码不能为空"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+    
+    if not user or not verify_password(password, user['password_hash']):
+        return jsonify({"code": 401, "message": "用户名或密码错误"})
+    
+    # 更新Token
+    token = generate_token()
+    token_expire = get_timestamp() + app.config['TOKEN_EXPIRY']
+    db.execute('UPDATE users SET token = ?, token_expire = ?, last_login = ?, status = ? WHERE id = ?',
+               (token, token_expire, get_timestamp(), 'online', user['id']))
+    db.commit()
+    
+    return jsonify({
+        "code": 0,
+        "message": "登录成功",
+        "data": {
+            "user_id": user['id'],
+            "username": user['username'],
+            "nickname": user['nickname'],
+            "email": user['email'],
+            "avatar_url": user['avatar_url'],
+            "signature": user['signature'],
+            "token": token,
+            "public_key": user['public_key']
+        }
+    })
+
+@app.route('/v1/auth/captcha', methods=['GET'])
+def v1_auth_captcha():
+    """获取验证码 - V1版本"""
+    # 返回一个简单的占位验证码
+    return jsonify({
+        "code": 0,
+        "data": {
+            "captcha_id": f"captcha_{int(time.time())}",
+            "captcha_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        }
+    })
+
+@app.route('/v1/me', methods=['GET'])
+def v1_me():
+    """获取当前用户信息 - V1版本"""
+    token = request.headers.get('Token') or request.args.get('token')
+    
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute(
+        'SELECT * FROM users WHERE token = ? AND token_expire > ?',
+        (token, get_timestamp())
+    ).fetchone()
+    
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效或已过期"})
+    
+    return jsonify({
+        "code": 0,
+        "data": {
+            "id": user['id'],
+            "username": user['username'],
+            "nickname": user['nickname'],
+            "email": user['email'],
+            "avatar_url": user['avatar_url'],
+            "signature": user['signature'],
+            "status": user['status'],
+            "created_at": user['created_at']
+        }
+    })
+
+@app.route('/v1/friends', methods=['GET'])
+def v1_friends():
+    """获取好友列表 - V1版本"""
+    token = request.headers.get('Token')
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE token = ? AND token_expire > ?', (token, get_timestamp())).fetchone()
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效"})
+    
+    friends = db.execute('''
+        SELECT u.id, u.username, u.nickname, u.avatar_url, u.signature, u.status
+        FROM friends f
+        JOIN users u ON f.friend_id = u.id
+        WHERE f.user_id = ? AND f.status = 'accepted'
+    ''', (user['id'],)).fetchall()
+    
+    return jsonify({
+        "code": 0,
+        "data": {"friends": [dict(f) for f in friends]}
+    })
+
+@app.route('/v1/friends/requests', methods=['GET'])
+def v1_friends_requests():
+    """获取好友请求列表 - V1版本"""
+    token = request.headers.get('Token')
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE token = ? AND token_expire > ?', (token, get_timestamp())).fetchone()
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效"})
+    
+    requests_list = db.execute('''
+        SELECT u.id, u.username, u.nickname, u.avatar_url, f.created_at
+        FROM friends f
+        JOIN users u ON f.user_id = u.id
+        WHERE f.friend_id = ? AND f.status = 'pending'
+    ''', (user['id'],)).fetchall()
+    
+    return jsonify({
+        "code": 0,
+        "data": {"requests": [dict(r) for r in requests_list]}
+    })
+
+@app.route('/v1/groups/list', methods=['GET'])
+def v1_groups_list():
+    """获取群组列表 - V1版本"""
+    token = request.headers.get('Token')
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE token = ? AND token_expire > ?', (token, get_timestamp())).fetchone()
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效"})
+    
+    groups = db.execute('''
+        SELECT g.*, gm.role
+        FROM groups g
+        JOIN group_members gm ON g.id = gm.group_id
+        WHERE gm.user_id = ?
+    ''', (user['id'],)).fetchall()
+    
+    return jsonify({
+        "code": 0,
+        "data": {"groups": [dict(g) for g in groups]}
+    })
+
+@app.route('/v1/notifications', methods=['GET'])
+def v1_notifications():
+    """获取通知列表 - V1版本"""
+    token = request.headers.get('Token')
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE token = ? AND token_expire > ?', (token, get_timestamp())).fetchone()
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效"})
+    
+    return jsonify({
+        "code": 0,
+        "data": {"notifications": []}
+    })
+
+@app.route('/v1/direct/unread', methods=['POST'])
+def v1_direct_unread():
+    """获取未读私信数 - V1版本"""
+    token = request.headers.get('Token')
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE token = ? AND token_expire > ?', (token, get_timestamp())).fetchone()
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效"})
+    
+    return jsonify({
+        "code": 0,
+        "data": {"unread": 0}
+    })
+
+@app.route('/v1/groups/unread', methods=['POST'])
+def v1_groups_unread():
+    """获取未读群消息数 - V1版本"""
+    token = request.headers.get('Token')
+    if not token:
+        return jsonify({"code": 401, "message": "未登录"})
+    
+    db = get_db()
+    user = db.execute('SELECT * FROM users WHERE token = ? AND token_expire > ?', (token, get_timestamp())).fetchone()
+    if not user:
+        return jsonify({"code": 401, "message": "Token无效"})
+    
+    return jsonify({
+        "code": 0,
+        "data": {"unread": 0}
+    })
+
+@app.route('/update/update.json', methods=['GET'])
+def v1_update_check():
+    """版本更新检查"""
+    return jsonify({
+        "code": 0,
+        "data": {
+            "version": "1.2.34",
+            "version_code": 34,
+            "update_url": "",
+            "changelog": "",
+            "force_update": False
+        }
     })
 
 # ============ 静态文件服务 / Static File Serving ============
