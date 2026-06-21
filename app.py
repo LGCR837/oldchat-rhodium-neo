@@ -54,6 +54,22 @@ app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 app.secret_key = secrets.token_hex(32)
 
+DEBUG_REQ = os.environ.get("DEBUG_REQ", "0") == "1"
+IS_WINDOWS = sys.platform.startswith("win")
+
+# Windows 下 eventlet 有一些兼容性问题（WSAEventSelect / greenlet 初始化等）
+# 如果在 Windows 上 monkey_patch 没能把 socket 真正绿化，就安全降级为 threading + 明文模式
+if IS_WINDOWS and HAS_EVENTLET:
+    try:
+        import socket as _socket_mod
+        _mod = getattr(_socket_mod.socket, "__module__", "") or ""
+        if "eventlet" not in _mod:
+            log.warning("[Windows] eventlet monkey_patch 未完全生效（socket=%s），降级为 threading 模式（WebSocket 将不可用）", _mod)
+            HAS_EVENTLET = False
+    except Exception as _e:
+        log.warning("[Windows] eventlet 自检失败(%s)，降级为 threading 模式", _e)
+        HAS_EVENTLET = False
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -419,37 +435,13 @@ def before_request_mw():
     g.decrypted_json = None
     g.current_user_id = None
 
-    ctype = request.headers.get("Content-Type", "")
-    is_multipart = "multipart/form-data" in ctype.lower()
+    # --- 调试模式：打印请求摘要 ---
+    if DEBUG_REQ:
+        ctype = request.headers.get("Content-Type", "")
+        log.info("REQ %s %s (IP=%s, ctype=%s)", request.method, request.path,
+                 request.remote_addr, ctype)
 
-    session_id = request.headers.get("X-Session")
-    enc_flag = request.headers.get("X-Enc")
-
-    if session_id and enc_flag == "1" and not is_multipart:
-        row = db_query_one(
-            "SELECT aes_key_b64, hmac_key_b64, user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
-            (session_id, now_ts()),
-        )
-        if row:
-            g.current_session_id = session_id
-            g.current_aes_key = base64.b64decode(row["aes_key_b64"])
-            g.current_hmac_key = base64.b64decode(row["hmac_key_b64"])
-            if row["user_id"]:
-                g.current_session_user_id = row["user_id"]
-
-            # Decrypt request body if POST/PUT/DELETE
-            if request.method in ("POST", "PUT", "DELETE"):
-                raw_body = request.get_data(cache=True)
-                if raw_body and len(raw_body) > 0:
-                    try:
-                        enc_json = json.loads(raw_body.decode("utf-8"))
-                        if "iv" in enc_json and "data" in enc_json and "mac" in enc_json:
-                            plain_bytes = decrypt_body(g.current_aes_key, g.current_hmac_key, enc_json)
-                            g.decrypted_json = json.loads(plain_bytes.decode("utf-8"))
-                    except Exception:
-                        pass
-
-    # Authorization header check
+    # --- 认证：Authorization header (plain bearer) ---
     auth_header = request.headers.get("Authorization", "")
     if auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
@@ -459,9 +451,52 @@ def before_request_mw():
         )
         if row:
             g.current_user_id = row["user_id"]
+            if DEBUG_REQ:
+                log.info("  -> bearer ok, user=%s", row["user_id"])
 
-    # fallback: session-bound user_id
-    if not g.current_user_id and hasattr(g, "current_session_user_id") and g.current_session_user_id:
+    # --- 会话：X-Session + X-Enc 头 ---
+    session_id = request.headers.get("X-Session") or ""
+    enc_flag = request.headers.get("X-Enc") or ""
+    if session_id and enc_flag == "1":
+        row = db_query_one(
+            "SELECT aes_key_b64, hmac_key_b64, user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
+            (session_id, now_ts()),
+        )
+        if row:
+            g.current_session_id = session_id
+            try:
+                g.current_aes_key = base64.b64decode(row["aes_key_b64"])
+                g.current_hmac_key = base64.b64decode(row["hmac_key_b64"])
+            except Exception:
+                g.current_aes_key = None
+                g.current_hmac_key = None
+            if row["user_id"]:
+                g.current_session_user_id = row["user_id"]
+                if not g.current_user_id:
+                    g.current_user_id = row["user_id"]
+            if DEBUG_REQ:
+                log.info("  -> session ok (X-Session=%s)", session_id[:12])
+
+            # --- 解密请求体（POST/PUT/DELETE 且有 aes_key）---
+            if request.method in ("POST", "PUT", "DELETE") and g.current_aes_key:
+                raw_body = request.get_data(cache=True)
+                if raw_body and len(raw_body) > 0:
+                    try:
+                        enc_json = json.loads(raw_body.decode("utf-8"))
+                        if isinstance(enc_json, dict) and "iv" in enc_json and "data" in enc_json and "mac" in enc_json:
+                            plain_bytes = decrypt_body(g.current_aes_key, g.current_hmac_key, enc_json)
+                            g.decrypted_json = json.loads(plain_bytes.decode("utf-8"))
+                            if DEBUG_REQ:
+                                log.info("  -> decrypted body: %s",
+                                         json.dumps(g.decrypted_json, ensure_ascii=False)[:200])
+                    except Exception as _e:
+                        if DEBUG_REQ:
+                            log.info("  -> decrypt skipped: %s", _e)
+                        # 解密失败时：保留原 JSON（plaintext request），不报错，不中断
+                        pass
+
+    # --- fallback: 若 session 绑定了 user_id 但没有 bearer ---
+    if not g.current_user_id and getattr(g, "current_session_user_id", None):
         g.current_user_id = g.current_session_user_id
 
 @app.after_request
@@ -497,14 +532,19 @@ def req_json() -> dict:
 
 @app.route("/v1/auth/handshake", methods=["POST"])
 def auth_handshake():
-    body = req_json()
+    # handshake 永远用明文 JSON（客户端在握手前还没拿到 session/key）
+    body = request.get_json(silent=True) or {}
     client_pub = body.get("client_pub") or body.get("clientPub")
     if not client_pub:
+        if DEBUG_REQ:
+            log.info("handshake: no client_pub, body keys=%s", list(body.keys())[:10])
         return jsonify({"code": 400, "msg": "missing client_pub"}), 400
     try:
         session_id, server_pub, aes_key, mac_key = do_ecdh_handshake(client_pub)
     except Exception as e:
-        return jsonify({"code": 400, "msg": "handshake failed: %s" % e}), 400
+        if DEBUG_REQ:
+            log.warning("handshake failed: %s", e)
+        return jsonify({"code": 400, "msg": "handshake failed"}), 400
     created = now_ts()
     expires = created + 24 * 3600
     db_execute(
@@ -512,14 +552,19 @@ def auth_handshake():
         (session_id, None, base64.b64encode(aes_key).decode(),
          base64.b64encode(mac_key).decode(), created, expires),
     )
+    if DEBUG_REQ:
+        log.info("handshake ok: session=%s", session_id[:12])
     return jsonify({"session_id": session_id, "server_pub": server_pub, "expires_at": expires})
 
 @app.route("/v1/auth/register", methods=["POST"])
 def auth_register():
-    body = req_json()
+    # 当请求带 X-Enc=1 且已解密时，用解密后的 body；否则用原生 JSON
+    body = g.decrypted_json if getattr(g, "decrypted_json", None) else (request.get_json(silent=True) or {})
     username = (body.get("username") or body.get("uid") or "").strip()
     password = (body.get("password") or "").strip()
     display_name = (body.get("display_name") or "").strip() or username
+    if DEBUG_REQ:
+        log.info("register: username=%s body_keys=%s", username, list(body.keys())[:10])
     if len(username) < 2:
         return jsonify({"code": 400, "msg": "username too short"}), 400
     if len(password) < 4:
@@ -549,9 +594,14 @@ def auth_register():
 
 @app.route("/v1/auth/login", methods=["POST"])
 def auth_login():
-    body = req_json()
-    identifier = (body.get("identifier") or body.get("username") or "").strip()
+    # 如果请求被加密解密过，优先用它；否则用原生 JSON
+    body = g.decrypted_json if getattr(g, "decrypted_json", None) else (request.get_json(silent=True) or {})
+    identifier = (body.get("identifier") or body.get("username") or body.get("uid") or "").strip()
     password = (body.get("password") or "").strip()
+    if DEBUG_REQ:
+        log.info("login: identifier=%s body_keys=%s session=%s",
+                 identifier, list(body.keys())[:10],
+                 getattr(g, "current_session_id", "")[:12] if getattr(g, "current_session_id", None) else "")
     if not identifier or not password:
         return jsonify({"code": 400, "msg": "missing credentials"}), 400
     row = db_query_one("SELECT * FROM users WHERE username = ? OR uid = ?", (identifier, identifier.upper()))
@@ -1754,11 +1804,23 @@ if __name__ == "__main__":
     log.info("WebSocket: enabled (eventlet=%s)", HAS_EVENTLET)
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
-    print("\nOldChat 兼容服务器已启动: http://%s:%d" % (host, port))
-    print("WebSocket 路径: ws://%s:%d/v1/ws?token=<access_token>&sid=<session_id>" % (host, port))
-    print("注: eventlet monkey_patch 在文件最顶部执行，以避免 Werkzeug context 冲突\n")
+    print()
+    print("=" * 60)
+    print(" OldChat 兼容服务器 已启动: http://%s:%d" % (host, port))
+    print(" WebSocket 路径: ws://%s:%d/v1/ws?token=<access_token>&sid=<session_id>" % (host, port))
+    if IS_WINDOWS:
+        print(" [Windows] eventlet 模式=%s（如发现请求不响应，可尝试 set DEBUG_REQ=1 看日志）" % HAS_EVENTLET)
+    if DEBUG_REQ:
+        print(" [调试] DEBUG_REQ=1 已启用，每个请求会打印方法、路径、请求头等")
+    print(" 环境变量: HOST=<ip> PORT=<port> DEBUG_REQ=0|1")
+    print("=" * 60)
+    print()
     if HAS_EVENTLET:
-        eventlet.wsgi.server(eventlet.listen((host, port)), dispatch, log_output=False)
+        try:
+            eventlet.wsgi.server(eventlet.listen((host, port)), dispatch, log_output=False)
+        except Exception as _e:
+            log.error("eventlet 启动失败，退回 threading 模式: %s", _e)
+            app.run(host=host, port=port, debug=False, threaded=True)
     else:
         app.run(host=host, port=port, debug=False, threaded=True)
 else:
