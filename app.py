@@ -110,10 +110,20 @@ def do_ecdh_handshake(client_pub_b64: str):
 
 _db_lock = threading.Lock()
 
+def _new_conn():
+    # Windows 上 SQLite 需要更长的 timeout 来避免 "database is locked"
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
 def db_query_one(sql: str, params=()):
     with _db_lock:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        conn = _new_conn()
         try:
             cur = conn.execute(sql, params)
             return cur.fetchone()
@@ -122,8 +132,7 @@ def db_query_one(sql: str, params=()):
 
 def db_query_all(sql: str, params=()):
     with _db_lock:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+        conn = _new_conn()
         try:
             return conn.execute(sql, params).fetchall()
         finally:
@@ -131,10 +140,9 @@ def db_query_all(sql: str, params=()):
 
 def db_execute(sql: str, params=()) -> int:
     with _db_lock:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn = _new_conn()
         try:
             cur = conn.execute(sql, params)
-            conn.commit()
             lid = cur.lastrowid
             return lid if lid else 0
         finally:
@@ -142,15 +150,14 @@ def db_execute(sql: str, params=()) -> int:
 
 def db_executemany(sql: str, params_list):
     with _db_lock:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn = _new_conn()
         try:
             conn.executemany(sql, params_list)
-            conn.commit()
         finally:
             conn.close()
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = _new_conn()
     try:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -404,6 +411,8 @@ def require_auth():
 
 # --- Middleware -----------------------------------------------------------
 
+DEBUG_MODE = os.environ.get("OC_DEBUG", "1") == "1"
+
 @app.before_request
 def before_request_mw():
     if request.method == "OPTIONS":
@@ -419,11 +428,33 @@ def before_request_mw():
     g.decrypted_json = None
     g.current_user_id = None
 
+    # Debug log: request line + headers (first 500 chars of body if small)
+    if DEBUG_MODE:
+        try:
+            body_preview = ""
+            if request.method in ("POST", "PUT", "DELETE"):
+                raw = request.get_data(cache=True)
+                if raw and len(raw) < 2000:
+                    try:
+                        body_preview = raw.decode("utf-8", errors="replace")
+                    except Exception:
+                        body_preview = "<binary %d bytes>" % len(raw)
+                elif raw:
+                    body_preview = "<%d bytes>" % len(raw)
+            hdrs = {k: v for k, v in request.headers.items()}
+            log.info("[REQ] %s %s from %s | ctype=%s | hdrs=%s | body=%s",
+                     request.method, request.path, request.remote_addr,
+                     request.headers.get("Content-Type", ""),
+                     json.dumps(hdrs, ensure_ascii=False) if hdrs else "",
+                     body_preview[:600])
+        except Exception as e:
+            log.info("[REQ] %s %s (log err: %s)", request.method, request.path, e)
+
     ctype = request.headers.get("Content-Type", "")
     is_multipart = "multipart/form-data" in ctype.lower()
 
-    session_id = request.headers.get("X-Session")
-    enc_flag = request.headers.get("X-Enc")
+    session_id = request.headers.get("X-Session") or request.headers.get("x-session")
+    enc_flag = request.headers.get("X-Enc") or request.headers.get("x-enc")
 
     if session_id and enc_flag == "1" and not is_multipart:
         row = db_query_one(
@@ -446,12 +477,15 @@ def before_request_mw():
                         if "iv" in enc_json and "data" in enc_json and "mac" in enc_json:
                             plain_bytes = decrypt_body(g.current_aes_key, g.current_hmac_key, enc_json)
                             g.decrypted_json = json.loads(plain_bytes.decode("utf-8"))
-                    except Exception:
-                        pass
+                            if DEBUG_MODE:
+                                log.info("[DECRYPT] ok -> %s", str(g.decrypted_json)[:400])
+                    except Exception as e:
+                        if DEBUG_MODE:
+                            log.info("[DECRYPT] failed: %s", e)
 
-    # Authorization header check
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.lower().startswith("bearer "):
+    # Authorization header check (case-insensitive)
+    auth_header = request.headers.get("Authorization", "") or request.headers.get("authorization", "")
+    if auth_header and auth_header.lower().startswith("bearer "):
         token = auth_header.split(" ", 1)[1].strip()
         row = db_query_one(
             "SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
@@ -459,6 +493,8 @@ def before_request_mw():
         )
         if row:
             g.current_user_id = row["user_id"]
+        elif DEBUG_MODE:
+            log.info("[AUTH] bearer token not found or expired: %s", token[:20])
 
     # fallback: session-bound user_id
     if not g.current_user_id and hasattr(g, "current_session_user_id") and g.current_session_user_id:
@@ -478,8 +514,25 @@ def after_request_mw(response):
                 enc = encrypt_body(g.current_aes_key, g.current_hmac_key, plain)
                 response.data = json.dumps(enc, ensure_ascii=False).encode("utf-8")
                 response.headers["Content-Type"] = "application/json"
+                if DEBUG_MODE:
+                    log.info("[ENCRYPT] response -> %d bytes (plain), %d bytes (enc)",
+                             len(plain), len(response.data))
         except Exception as e:
             log.warning("encrypt response failed: %s", e)
+
+    if DEBUG_MODE:
+        try:
+            preview = ""
+            if response.is_json:
+                raw = response.get_data(as_text=False) or b""
+                if len(raw) < 500:
+                    preview = response.get_data(as_text=True) or ""
+                    preview = preview[:400]
+            log.info("[RESP] %s %s -> status=%d, type=%s, body=%s",
+                     request.method, request.path, response.status_code,
+                     response.headers.get("Content-Type", ""), preview)
+        except Exception:
+            pass
 
     return response
 
@@ -517,12 +570,25 @@ def auth_handshake():
 @app.route("/v1/auth/register", methods=["POST"])
 def auth_register():
     body = req_json()
-    username = (body.get("username") or body.get("uid") or "").strip()
-    password = (body.get("password") or "").strip()
-    display_name = (body.get("display_name") or "").strip() or username
+    if DEBUG_MODE:
+        log.info("[REGISTER] raw body keys: %s", list(body.keys()))
+    # 兼容多字段名: uid/username/identifier/login + password/pass
+    username = (
+        body.get("uid") or body.get("username") or body.get("identifier")
+        or body.get("login") or body.get("user") or ""
+    ).strip()
+    password = (
+        body.get("password") or body.get("pass") or body.get("pwd") or ""
+    ).strip()
+    display_name = (body.get("display_name") or body.get("nickname")
+                    or body.get("name") or "").strip() or username
     if len(username) < 2:
+        if DEBUG_MODE:
+            log.info("[REGISTER] fail: username too short (%r)", username)
         return jsonify({"code": 400, "msg": "username too short"}), 400
     if len(password) < 4:
+        if DEBUG_MODE:
+            log.info("[REGISTER] fail: password too short (%d chars)", len(password))
         return jsonify({"code": 400, "msg": "password too short"}), 400
     existing = db_query_one("SELECT id FROM users WHERE username = ? OR uid = ?", (username, username.upper()))
     if existing:
@@ -541,6 +607,8 @@ def auth_register():
         db_execute("UPDATE sessions SET user_id = ? WHERE session_id = ?",
                    (row["id"], g.current_session_id))
     access_token, refresh_token = issue_tokens(row["id"])
+    if DEBUG_MODE:
+        log.info("[REGISTER] ok: uid=%s, token=%s...", uid, access_token[:12])
     return jsonify({
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -550,18 +618,32 @@ def auth_register():
 @app.route("/v1/auth/login", methods=["POST"])
 def auth_login():
     body = req_json()
-    identifier = (body.get("identifier") or body.get("username") or "").strip()
-    password = (body.get("password") or "").strip()
+    if DEBUG_MODE:
+        log.info("[LOGIN] raw body keys: %s", list(body.keys()))
+    # 兼容多字段名
+    identifier = (
+        body.get("identifier") or body.get("username") or body.get("uid")
+        or body.get("login") or body.get("user") or ""
+    ).strip()
+    password = (
+        body.get("password") or body.get("pass") or body.get("pwd") or ""
+    ).strip()
     if not identifier or not password:
+        if DEBUG_MODE:
+            log.info("[LOGIN] fail: missing credentials (id=%r, pwd=%r)", identifier, "*" * len(password))
         return jsonify({"code": 400, "msg": "missing credentials"}), 400
     row = db_query_one("SELECT * FROM users WHERE username = ? OR uid = ?", (identifier, identifier.upper()))
     if not row or not verify_password(password, row["password_hash"]):
+        if DEBUG_MODE:
+            log.info("[LOGIN] fail: invalid credentials (id=%r, user_found=%s)", identifier, row is not None)
         return jsonify({"code": 401, "msg": "invalid credentials"}), 401
     if g.current_session_id:
         db_execute("UPDATE sessions SET user_id = ? WHERE session_id = ?",
                    (row["id"], g.current_session_id))
     access_token, refresh_token = issue_tokens(row["id"])
     db_execute("UPDATE users SET last_seen = ? WHERE id = ?", (now_ts(), row["id"]))
+    if DEBUG_MODE:
+        log.info("[LOGIN] ok: uid=%s, token=%s...", row["uid"], access_token[:12])
     return jsonify({
         "access_token": access_token,
         "refresh_token": refresh_token,
