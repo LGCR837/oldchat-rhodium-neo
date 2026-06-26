@@ -990,13 +990,24 @@ def friends_requests():
     )
     results = []
     for r in rows:
-        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_user_id"],))
+        from_user = db_query_one("SELECT uid, username, display_name, avatar_url FROM users WHERE id = ?", (r["from_user_id"],))
+        status_num = 0 if r["status"] == "pending" else (1 if r["status"] == "accepted" else 2)
         results.append({
             "id": str(r["id"]),
+            "request_id": str(r["id"]),
             "from_uid": from_user["uid"] if from_user else "",
-            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
-            "from_avatar": from_user["avatar_url"] or "" if from_user else "",
-            "status": r["status"],
+            "from_username": from_user["username"] if from_user else "",
+            "from_display_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "from_title": "",
+            "avatar_url": from_user["avatar_url"] or "" if from_user else "",
+            "from_user": {
+                "uid": from_user["uid"] if from_user else "",
+                "username": from_user["username"] if from_user else "",
+                "display_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+                "user_title": "",
+                "avatar_url": from_user["avatar_url"] or "" if from_user else "",
+            },
+            "status": status_num,
             "created_at": r["created_at"],
         })
     return jsonify({"requests": results})
