@@ -82,8 +82,8 @@ def _load_settings(path):
         log.warning("[settings] 加载失败: %s，使用默认配置", e)
     return {
         "server": {"name": "OldChat", "version": "1.0.0", "url": "", "host": "0.0.0.0", "port": 8080},
-        "debug": True,
-        "announcement": {"title": "服务器公告", "body": "这是 OldChat 兼容服务器。", "enabled": True},
+        "debug": false,
+        "announcement": {"title": "服务器公告", "body": "这是 OldChat 兼容服务器。", "enabled": true},
         "auto_join_group": {"enabled": True, "group_id": "", "group_name": "官方群聊", "auto_create": True, "welcome_message": "欢迎加入官方群聊！"},
         "features": {},
         "limits": {"max_upload_mb": 20, "max_message_length": 2000},
