@@ -1131,7 +1131,8 @@ def direct_send():
             "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'message', ?, ?, ?, ?, 0)",
             (target_id, "新消息", msg_body, json.dumps({"from_uid": from_user["uid"] if from_user else ""}), created),
         )
-    return jsonify({"status": "ok", "message": msg_dict})
+    # 注意：返回格式必须是消息对象本身（不能外层包 message），客户端 l(String str) 直接解析响应 JSON
+    return jsonify(msg_dict)
 
 @app.route("/v1/direct/read", methods=["POST"])
 def direct_read():
@@ -1277,7 +1278,8 @@ def group_send():
     )
     for m in members:
         push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
-    return jsonify({"status": "ok", "message": msg_dict})
+    # 注意：返回格式必须是消息对象本身（不能外层包 message），客户端 l(String str) 直接解析响应 JSON
+    return jsonify(msg_dict)
 
 @app.route("/v1/groups/read", methods=["POST"])
 def group_read():
