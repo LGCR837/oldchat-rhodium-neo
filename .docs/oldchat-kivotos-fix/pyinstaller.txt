@@ -1,1 +1,0 @@
-pyinstaller --noconsole --add-data "templates;templates" --add-data "static;static" --optimize 2 app.py

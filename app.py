@@ -55,7 +55,6 @@ app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 app.secret_key = secrets.token_hex(32)
 
-DEBUG_REQ = os.environ.get("DEBUG_REQ", "0") == "1"
 IS_WINDOWS = sys.platform.startswith("win")
 
 logging.basicConfig(
@@ -65,6 +64,12 @@ logging.basicConfig(
 log = logging.getLogger("oldchat")
 
 # ---------- Settings ----------
+# SETTINGS_PATH 保留环境变量 fallback（方便命令行指定配置文件）
+SETTINGS_PATH = os.environ.get(
+    "SETTINGS_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+)
+
 def _load_settings(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -76,25 +81,27 @@ def _load_settings(path):
     except Exception as e:
         log.warning("[settings] 加载失败: %s，使用默认配置", e)
     return {
-        "server": {"name": "OldChat", "version": "1.0.0", "url": ""},
+        "server": {"name": "OldChat", "version": "1.0.0", "url": "", "host": "0.0.0.0", "port": 8080},
+        "debug": True,
         "announcement": {"title": "服务器公告", "body": "这是 OldChat 兼容服务器。", "enabled": True},
-        "auto_join_group": {"enabled": True, "group_id": "", "group_name": "大厅", "auto_create": True, "welcome_message": "欢迎加入默认大厅！"},
+        "auto_join_group": {"enabled": True, "group_id": "", "group_name": "官方群聊", "auto_create": True, "welcome_message": "欢迎加入官方群聊！"},
         "features": {},
         "limits": {"max_upload_mb": 20, "max_message_length": 2000},
     }
 
-SETTINGS_PATH = os.environ.get(
-    "SETTINGS_PATH",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
-)
 SETTINGS = _load_settings(SETTINGS_PATH)
+
+# 从 settings 读取配置，环境变量仅作为 fallback 覆盖
+DEBUG_REQ = bool(SETTINGS.get("debug", True))
+if os.environ.get("DEBUG_REQ"):
+    DEBUG_REQ = os.environ["DEBUG_REQ"] == "1"
 
 def _ensure_default_group():
     cfg = SETTINGS.get("auto_join_group", {}) or {}
     if not cfg.get("enabled"):
         return None
     gid = (cfg.get("group_id") or "").strip()
-    name = cfg.get("group_name") or "大厅"
+    name = cfg.get("group_name") or "官方群聊"
     if gid:
         existing = db_query_one("SELECT group_id FROM groups WHERE group_id = ?", (gid,))
         if existing:
@@ -280,6 +287,7 @@ def init_db():
                 group_id TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
                 joined_at INTEGER,
+                last_read_msg_id INTEGER DEFAULT 0,
                 UNIQUE(group_id, user_id)
             );
 
@@ -407,10 +415,12 @@ def now_ts() -> int:
     return int(time.time())
 
 def gen_uid() -> str:
-    return secrets.token_hex(16).upper()
+    return secrets.token_hex(5).upper()
 
 def gen_group_id() -> str:
-    return "GRP-" + secrets.token_hex(8).upper()
+    import string
+    chars = string.ascii_uppercase + string.digits
+    return "GRP-" + "".join(secrets.choice(chars) for _ in range(6))
 
 def gen_moment_id() -> str:
     return "MMT-" + secrets.token_hex(12).upper()
@@ -644,11 +654,17 @@ def auth_register():
     default_gid = _ensure_default_group()
     if default_gid:
         try:
-            db_execute(
-                "INSERT OR IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
-                (default_gid, row["id"], now_ts()),
+            # 先获取入群前的最新消息 ID，作为初始已读位置
+            latest_before = db_query_one(
+                "SELECT MAX(id) as max_id FROM group_messages WHERE group_id = ?",
+                (default_gid,),
             )
-            # 可选：在群里发一条系统欢迎消息
+            last_read = (latest_before["max_id"] if latest_before else 0) or 0
+            db_execute(
+                "INSERT OR IGNORE INTO group_members (group_id, user_id, joined_at, last_read_msg_id) VALUES (?, ?, ?, ?)",
+                (default_gid, row["id"], now_ts(), last_read),
+            )
+            # 可选：在群里发一条系统欢迎消息（对新用户来说是未读的）
             welcome = (SETTINGS.get("auto_join_group", {}) or {}).get("welcome_message", "")
             if welcome:
                 db_execute(
@@ -940,7 +956,7 @@ def groups_create():
         (group_id, name, avatar_url, g.current_user_id, created),
     )
     db_execute(
-        "INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
+        "INSERT INTO group_members (group_id, user_id, joined_at, last_read_msg_id) VALUES (?, ?, ?, 0)",
         (group_id, g.current_user_id, created),
     )
     return jsonify({"group_id": group_id, "name": name, "avatar_url": avatar_url, "owner_id": str(g.current_user_id), "created_at": created})
@@ -959,8 +975,13 @@ def groups_join():
     existing = db_query_one("SELECT id FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, g.current_user_id))
     if existing:
         return jsonify({"group_id": group_id, "joined": True, "message": "already member"})
-    db_execute("INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
-               (group_id, g.current_user_id, now_ts()))
+    # 入群前获取最新消息 ID 作为初始已读位置
+    latest = db_query_one("SELECT MAX(id) as max_id FROM group_messages WHERE group_id = ?", (group_id,))
+    last_read = (latest["max_id"] if latest else 0) or 0
+    db_execute(
+        "INSERT INTO group_members (group_id, user_id, joined_at, last_read_msg_id) VALUES (?, ?, ?, ?)",
+        (group_id, g.current_user_id, now_ts(), last_read),
+    )
     return jsonify({"group_id": group_id, "joined": True})
 
 @app.route("/v1/groups/leave", methods=["POST"])
@@ -1044,9 +1065,15 @@ def direct_messages():
     for r in rows:
         from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
         to_user = db_query_one("SELECT uid FROM users WHERE id = ?", (r["to_id"],))
+        # thread_id 是对方的 UID（当前对话的另一方）
+        other_uid = ""
+        if r["from_id"] == g.current_user_id:
+            other_uid = to_user["uid"] if to_user else ""
+        else:
+            other_uid = from_user["uid"] if from_user else ""
         messages.append({
             "id": str(r["id"]),
-            "thread_id": from_user["uid"] if from_user else "",
+            "thread_id": other_uid,
             "from_uid": from_user["uid"] if from_user else "",
             "to_uid": to_user["uid"] if to_user else "",
             "body": r["body"] or "",
@@ -1057,6 +1084,7 @@ def direct_messages():
             "burn_after_seconds": r["burn_after_seconds"] or 0,
             "created_at": r["created_at"],
             "is_read": 1 if r["is_read"] else 0,
+            "status": 3 if r["is_read"] else 1,
             "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
             "from_avatar": from_user["avatar_url"] or "" if from_user else "",
         })
@@ -1089,6 +1117,7 @@ def direct_send():
         "id": str(msg_id),
         "thread_id": to_uid,
         "from_uid": from_user["uid"] if from_user else "",
+        "to_uid": to_uid,
         "body": msg_body,
         "msg_type": msg_type,
         "media_url": media_url,
@@ -1097,6 +1126,7 @@ def direct_send():
         "burn_after_seconds": burn,
         "created_at": created,
         "is_read": 0,
+        "status": 1,
         "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
         "from_avatar": from_user["avatar_url"] or "" if from_user else "",
     }
@@ -1108,7 +1138,8 @@ def direct_send():
             "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'message', ?, ?, ?, ?, 0)",
             (target_id, "新消息", msg_body, json.dumps({"from_uid": from_user["uid"] if from_user else ""}), created),
         )
-    return jsonify({"status": "ok", "message": msg_dict})
+    # 注意：返回格式必须是消息对象本身（不能外层包 message），客户端 l(String str) 直接解析响应 JSON
+    return jsonify(msg_dict)
 
 @app.route("/v1/direct/read", methods=["POST"])
 def direct_read():
@@ -1189,18 +1220,21 @@ def group_messages():
     )
     messages = []
     for r in rows:
-        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
+        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],)) if r["from_id"] else None
+        is_system = r["from_id"] == 0
         messages.append({
             "id": str(r["id"]),
             "group_id": r["group_id"],
-            "from_uid": from_user["uid"] if from_user else "",
+            "thread_id": r["group_id"],
+            "from_uid": from_user["uid"] if from_user else ("system" if is_system else ""),
             "body": r["body"] or "",
             "msg_type": r["msg_type"] or "text",
             "media_url": r["media_url"] or "",
             "thumb_url": r["thumb_url"] or "",
             "duration_ms": r["burn_after_seconds"] or 0,
             "created_at": r["created_at"],
-            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "status": 1,
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else ("系统消息" if is_system else ""),
             "from_avatar": from_user["avatar_url"] or "" if from_user else "",
         })
     return jsonify({"messages": messages})
@@ -1231,6 +1265,7 @@ def group_send():
     msg_dict = {
         "id": str(msg_id),
         "group_id": group_id,
+        "thread_id": group_id,
         "from_uid": from_user["uid"] if from_user else "",
         "body": msg_body,
         "msg_type": msg_type,
@@ -1239,6 +1274,7 @@ def group_send():
         "duration_ms": burn,
         "burn_after_seconds": burn,
         "created_at": created,
+        "status": 1,
         "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
         "from_avatar": from_user["avatar_url"] or "" if from_user else "",
     }
@@ -1249,7 +1285,8 @@ def group_send():
     )
     for m in members:
         push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
-    return jsonify({"status": "ok", "message": msg_dict})
+    # 注意：返回格式必须是消息对象本身（不能外层包 message），客户端 l(String str) 直接解析响应 JSON
+    return jsonify(msg_dict)
 
 @app.route("/v1/groups/read", methods=["POST"])
 def group_read():
@@ -1259,6 +1296,16 @@ def group_read():
     group_id = (body.get("group_id") or "").strip()
     if not group_id:
         return jsonify({"code": 400, "msg": "missing group_id"}), 400
+    # 获取该群最新的消息 ID
+    latest = db_query_one(
+        "SELECT MAX(id) as max_id FROM group_messages WHERE group_id = ?",
+        (group_id,),
+    )
+    max_id = (latest["max_id"] if latest else 0) or 0
+    db_execute(
+        "UPDATE group_members SET last_read_msg_id = ? WHERE group_id = ? AND user_id = ?",
+        (max_id, group_id, g.current_user_id),
+    )
     return jsonify({"status": "ok"})
 
 @app.route("/v1/groups/unread", methods=["GET", "POST"])
@@ -1267,25 +1314,32 @@ def group_unread():
     if _auth: return _auth
     limit = min(int(request.args.get("limit", 50) or req_json().get("limit", 50)), 200)
     me = g.current_user_id
+    # 找出所有群中，消息 ID > 用户已读到的最后一条消息 ID 的消息（排除自己发的）
     rows = db_query_all(
-        """SELECT gm.* FROM group_messages gm JOIN group_members gmm ON gmm.group_id = gm.group_id
-           WHERE gmm.user_id = ? AND gm.from_id != ? ORDER BY gm.created_at DESC LIMIT ?""",
+        """SELECT gm.* FROM group_messages gm
+           JOIN group_members gmm ON gmm.group_id = gm.group_id
+           WHERE gmm.user_id = ? AND gm.from_id != ?
+             AND gm.id > COALESCE(gmm.last_read_msg_id, 0)
+           ORDER BY gm.created_at DESC, gm.id DESC LIMIT ?""",
         (me, me, limit),
     )
     messages = []
     for r in rows:
-        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],))
+        from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],)) if r["from_id"] else None
+        is_system = r["from_id"] == 0
         messages.append({
             "id": str(r["id"]),
             "group_id": r["group_id"],
-            "from_uid": from_user["uid"] if from_user else "",
+            "thread_id": r["group_id"],
+            "from_uid": from_user["uid"] if from_user else ("system" if is_system else ""),
             "body": r["body"] or "",
             "msg_type": r["msg_type"] or "text",
             "media_url": r["media_url"] or "",
             "thumb_url": r["thumb_url"] or "",
             "duration_ms": r["burn_after_seconds"] or 0,
             "created_at": r["created_at"],
-            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
+            "status": 1,
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else ("系统消息" if is_system else ""),
             "from_avatar": from_user["avatar_url"] or "" if from_user else "",
         })
     return jsonify({"messages": messages})
@@ -1909,17 +1963,18 @@ if __name__ == "__main__":
     log.info("DB: %s", DB_PATH)
     log.info("Media dir: %s", MEDIA_DIR)
     log.info("WebSocket: enabled (eventlet=%s)", HAS_EVENTLET)
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", 8080))
+    srv = SETTINGS.get("server", {}) or {}
+    host = os.environ.get("HOST", srv.get("host", "0.0.0.0"))
+    port = int(os.environ.get("PORT", srv.get("port", 8080)))
     print()
     print("=" * 60)
     print(" OldChat 兼容服务器 已启动: http://%s:%d" % (host, port))
     print(" WebSocket 路径: ws://%s:%d/v1/ws?token=<access_token>&sid=<session_id>" % (host, port))
     if IS_WINDOWS:
-        print(" [Windows] eventlet 模式=%s（如发现请求不响应，可尝试 set DEBUG_REQ=1 看日志）" % HAS_EVENTLET)
+        print(" [Windows] eventlet 模式=%s（如发现请求不响应，可在 settings.json 打开 debug 看日志）" % HAS_EVENTLET)
     if DEBUG_REQ:
-        print(" [调试] DEBUG_REQ=1 已启用，每个请求会打印方法、路径、请求头等")
-    print(" 环境变量: HOST=<ip> PORT=<port> DEBUG_REQ=0|1")
+        print(" [调试] debug=true 已启用，每个请求会打印方法、路径、请求头等")
+    print(" 配置文件: %s" % SETTINGS_PATH)
     print("=" * 60)
     print()
     if HAS_EVENTLET:
