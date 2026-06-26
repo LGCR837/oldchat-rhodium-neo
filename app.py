@@ -988,17 +988,22 @@ def friends_requests():
            FROM friendships f WHERE f.friend_id = ? ORDER BY f.created_at DESC LIMIT 100""",
         (g.current_user_id,),
     )
+    if DEBUG_REQ:
+        log.info("  -> friends_requests: count=%d", len(rows))
     results = []
     for r in rows:
         from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_user_id"],))
         results.append({
             "id": str(r["id"]),
+            "request_id": str(r["id"]),
             "from_uid": from_user["uid"] if from_user else "",
             "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else "",
             "from_avatar": from_user["avatar_url"] or "" if from_user else "",
             "status": r["status"],
             "created_at": r["created_at"],
         })
+    if DEBUG_REQ:
+        log.info("  -> friends_requests: returning %d requests", len(results))
     return jsonify({"requests": results})
 
 @app.route("/v1/friends/respond", methods=["POST"])
@@ -2086,13 +2091,13 @@ if HAS_EVENTLET:
     # WSGI dispatch
     def dispatch(environ, start_response):
         path = environ.get("PATH_INFO", "")
-        if path == "/v1/ws":
+        if path == "/v1/ws" or path == "/ws":
             return ws_handler(environ, start_response)
         return app(environ, start_response)
 else:
     def dispatch(environ, start_response):
         path = environ.get("PATH_INFO", "")
-        if path == "/v1/ws":
+        if path == "/v1/ws" or path == "/ws":
             start_response("501 Not Implemented", [("Content-Type", "application/json")])
             return [b'{"code":501,"msg":"websocket unavailable: install eventlet"}']
         return app(environ, start_response)
