@@ -12,9 +12,9 @@
     "auto_join_group": {
         "enabled": true,
         "group_id": "",
-        "group_name": "大厅",
+        "group_name": "官方群聊",
         "auto_create": true,
-        "welcome_message": "欢迎加入默认大厅！这是服务器自动创建的公共交流群。"
+        "welcome_message": "欢迎加入官方群聊！这是服务器自动创建的公共交流群。"
     },
     "features": {
         "encrypted_login": true,
