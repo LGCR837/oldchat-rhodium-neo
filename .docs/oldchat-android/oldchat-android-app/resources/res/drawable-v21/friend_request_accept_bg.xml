@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/color_primary_pressed_overlay">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="?attr/colorPrimary"/>
+            <size
+                android:height="36dp"
+                android:width="36dp"/>
+        </shape>
+    </item>
+</ripple>

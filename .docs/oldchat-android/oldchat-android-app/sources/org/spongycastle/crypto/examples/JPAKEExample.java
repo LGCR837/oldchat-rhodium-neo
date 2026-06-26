@@ -1,0 +1,118 @@
+package org.spongycastle.crypto.examples;
+
+import java.io.PrintStream;
+import java.math.BigInteger;
+import java.security.SecureRandom;
+import org.spongycastle.crypto.CryptoException;
+import org.spongycastle.crypto.agreement.jpake.JPAKEParticipant;
+import org.spongycastle.crypto.agreement.jpake.JPAKEPrimeOrderGroup;
+import org.spongycastle.crypto.agreement.jpake.JPAKEPrimeOrderGroups;
+import org.spongycastle.crypto.agreement.jpake.JPAKERound1Payload;
+import org.spongycastle.crypto.agreement.jpake.JPAKERound2Payload;
+import org.spongycastle.crypto.agreement.jpake.JPAKERound3Payload;
+import org.spongycastle.crypto.digests.SHA256Digest;
+
+/* JADX INFO: loaded from: classes.dex */
+public class JPAKEExample {
+    private static BigInteger deriveSessionKey(BigInteger bigInteger) {
+        SHA256Digest sHA256Digest = new SHA256Digest();
+        byte[] byteArray = bigInteger.toByteArray();
+        byte[] bArr = new byte[sHA256Digest.getDigestSize()];
+        sHA256Digest.update(byteArray, 0, byteArray.length);
+        sHA256Digest.doFinal(bArr, 0);
+        return new BigInteger(bArr);
+    }
+
+    public static void main(String[] strArr) throws CryptoException {
+        JPAKEPrimeOrderGroup jPAKEPrimeOrderGroup = JPAKEPrimeOrderGroups.NIST_3072;
+        BigInteger p2 = jPAKEPrimeOrderGroup.getP();
+        BigInteger q2 = jPAKEPrimeOrderGroup.getQ();
+        BigInteger g2 = jPAKEPrimeOrderGroup.getG();
+        PrintStream printStream = System.out;
+        printStream.println("********* Initialization **********");
+        printStream.println("Public parameters for the cyclic group:");
+        printStream.println("p (" + p2.bitLength() + " bits): " + p2.toString(16));
+        printStream.println("q (" + q2.bitLength() + " bits): " + q2.toString(16));
+        printStream.println("g (" + p2.bitLength() + " bits): " + g2.toString(16));
+        StringBuilder sb = new StringBuilder();
+        sb.append("p mod q = ");
+        sb.append(p2.mod(q2).toString(16));
+        printStream.println(sb.toString());
+        printStream.println("g^{q} mod p = " + g2.modPow(q2, p2).toString(16));
+        printStream.println("");
+        printStream.println("(Secret passwords used by Alice and Bob: \"password\" and \"password\")\n");
+        SHA256Digest sHA256Digest = new SHA256Digest();
+        SecureRandom secureRandom = new SecureRandom();
+        JPAKEParticipant jPAKEParticipant = new JPAKEParticipant("alice", "password".toCharArray(), jPAKEPrimeOrderGroup, sHA256Digest, secureRandom);
+        JPAKEParticipant jPAKEParticipant2 = new JPAKEParticipant("bob", "password".toCharArray(), jPAKEPrimeOrderGroup, sHA256Digest, secureRandom);
+        JPAKERound1Payload jPAKERound1PayloadCreateRound1PayloadToSend = jPAKEParticipant.createRound1PayloadToSend();
+        JPAKERound1Payload jPAKERound1PayloadCreateRound1PayloadToSend2 = jPAKEParticipant2.createRound1PayloadToSend();
+        printStream.println("************ Round 1 **************");
+        printStream.println("Alice sends to Bob: ");
+        printStream.println("g^{x1}=" + jPAKERound1PayloadCreateRound1PayloadToSend.getGx1().toString(16));
+        printStream.println("g^{x2}=" + jPAKERound1PayloadCreateRound1PayloadToSend.getGx2().toString(16));
+        printStream.println("KP{x1}={" + jPAKERound1PayloadCreateRound1PayloadToSend.getKnowledgeProofForX1()[0].toString(16) + "};{" + jPAKERound1PayloadCreateRound1PayloadToSend.getKnowledgeProofForX1()[1].toString(16) + "}");
+        printStream.println("KP{x2}={" + jPAKERound1PayloadCreateRound1PayloadToSend.getKnowledgeProofForX2()[0].toString(16) + "};{" + jPAKERound1PayloadCreateRound1PayloadToSend.getKnowledgeProofForX2()[1].toString(16) + "}");
+        printStream.println("");
+        printStream.println("Bob sends to Alice: ");
+        StringBuilder sb2 = new StringBuilder();
+        sb2.append("g^{x3}=");
+        sb2.append(jPAKERound1PayloadCreateRound1PayloadToSend2.getGx1().toString(16));
+        printStream.println(sb2.toString());
+        printStream.println("g^{x4}=" + jPAKERound1PayloadCreateRound1PayloadToSend2.getGx2().toString(16));
+        printStream.println("KP{x3}={" + jPAKERound1PayloadCreateRound1PayloadToSend2.getKnowledgeProofForX1()[0].toString(16) + "};{" + jPAKERound1PayloadCreateRound1PayloadToSend2.getKnowledgeProofForX1()[1].toString(16) + "}");
+        printStream.println("KP{x4}={" + jPAKERound1PayloadCreateRound1PayloadToSend2.getKnowledgeProofForX2()[0].toString(16) + "};{" + jPAKERound1PayloadCreateRound1PayloadToSend2.getKnowledgeProofForX2()[1].toString(16) + "}");
+        printStream.println("");
+        jPAKEParticipant.validateRound1PayloadReceived(jPAKERound1PayloadCreateRound1PayloadToSend2);
+        printStream.println("Alice checks g^{x4}!=1: OK");
+        printStream.println("Alice checks KP{x3}: OK");
+        printStream.println("Alice checks KP{x4}: OK");
+        printStream.println("");
+        jPAKEParticipant2.validateRound1PayloadReceived(jPAKERound1PayloadCreateRound1PayloadToSend);
+        printStream.println("Bob checks g^{x2}!=1: OK");
+        printStream.println("Bob checks KP{x1},: OK");
+        printStream.println("Bob checks KP{x2},: OK");
+        printStream.println("");
+        JPAKERound2Payload jPAKERound2PayloadCreateRound2PayloadToSend = jPAKEParticipant.createRound2PayloadToSend();
+        JPAKERound2Payload jPAKERound2PayloadCreateRound2PayloadToSend2 = jPAKEParticipant2.createRound2PayloadToSend();
+        printStream.println("************ Round 2 **************");
+        printStream.println("Alice sends to Bob: ");
+        printStream.println("A=" + jPAKERound2PayloadCreateRound2PayloadToSend.getA().toString(16));
+        printStream.println("KP{x2*s}={" + jPAKERound2PayloadCreateRound2PayloadToSend.getKnowledgeProofForX2s()[0].toString(16) + "},{" + jPAKERound2PayloadCreateRound2PayloadToSend.getKnowledgeProofForX2s()[1].toString(16) + "}");
+        printStream.println("");
+        printStream.println("Bob sends to Alice");
+        StringBuilder sb3 = new StringBuilder();
+        sb3.append("B=");
+        sb3.append(jPAKERound2PayloadCreateRound2PayloadToSend2.getA().toString(16));
+        printStream.println(sb3.toString());
+        printStream.println("KP{x4*s}={" + jPAKERound2PayloadCreateRound2PayloadToSend2.getKnowledgeProofForX2s()[0].toString(16) + "},{" + jPAKERound2PayloadCreateRound2PayloadToSend2.getKnowledgeProofForX2s()[1].toString(16) + "}");
+        printStream.println("");
+        jPAKEParticipant.validateRound2PayloadReceived(jPAKERound2PayloadCreateRound2PayloadToSend2);
+        printStream.println("Alice checks KP{x4*s}: OK\n");
+        jPAKEParticipant2.validateRound2PayloadReceived(jPAKERound2PayloadCreateRound2PayloadToSend);
+        printStream.println("Bob checks KP{x2*s}: OK\n");
+        BigInteger bigIntegerCalculateKeyingMaterial = jPAKEParticipant.calculateKeyingMaterial();
+        BigInteger bigIntegerCalculateKeyingMaterial2 = jPAKEParticipant2.calculateKeyingMaterial();
+        printStream.println("********* After round 2 ***********");
+        printStream.println("Alice computes key material \t K=" + bigIntegerCalculateKeyingMaterial.toString(16));
+        printStream.println("Bob computes key material \t K=" + bigIntegerCalculateKeyingMaterial2.toString(16));
+        printStream.println();
+        deriveSessionKey(bigIntegerCalculateKeyingMaterial);
+        deriveSessionKey(bigIntegerCalculateKeyingMaterial2);
+        JPAKERound3Payload jPAKERound3PayloadCreateRound3PayloadToSend = jPAKEParticipant.createRound3PayloadToSend(bigIntegerCalculateKeyingMaterial);
+        JPAKERound3Payload jPAKERound3PayloadCreateRound3PayloadToSend2 = jPAKEParticipant2.createRound3PayloadToSend(bigIntegerCalculateKeyingMaterial2);
+        printStream.println("************ Round 3 **************");
+        printStream.println("Alice sends to Bob: ");
+        printStream.println("MacTag=" + jPAKERound3PayloadCreateRound3PayloadToSend.getMacTag().toString(16));
+        printStream.println("");
+        printStream.println("Bob sends to Alice: ");
+        printStream.println("MacTag=" + jPAKERound3PayloadCreateRound3PayloadToSend2.getMacTag().toString(16));
+        printStream.println("");
+        jPAKEParticipant.validateRound3PayloadReceived(jPAKERound3PayloadCreateRound3PayloadToSend2, bigIntegerCalculateKeyingMaterial);
+        printStream.println("Alice checks MacTag: OK\n");
+        jPAKEParticipant2.validateRound3PayloadReceived(jPAKERound3PayloadCreateRound3PayloadToSend, bigIntegerCalculateKeyingMaterial2);
+        printStream.println("Bob checks MacTag: OK\n");
+        printStream.println();
+        printStream.println("MacTags validated, therefore the keying material matches.");
+    }
+}

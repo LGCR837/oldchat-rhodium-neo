@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="vertical"
+    android:background="@color/color_background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <LinearLayout
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:background="@color/color_surface"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <ImageView
+            android:id="@+id/btnPrivacyBack"
+            android:padding="6dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:tint="@color/color_text_primary"
+            android:contentDescription="@null"
+            app:srcCompat="@drawable/ic_nav_back"/>
+        <TextView
+            android:textSize="18sp"
+            android:textColor="@color/color_text_primary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:text="隐私协议"/>
+    </LinearLayout>
+    <ScrollView
+        android:padding="16dp"
+        android:scrollbars="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+        <TextView
+            android:textSize="14sp"
+            android:textColor="@color/color_text_primary"
+            android:id="@+id/tvPrivacyContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:includeFontPadding="false"
+            android:lineSpacingExtra="4dp"/>
+    </ScrollView>
+</LinearLayout>

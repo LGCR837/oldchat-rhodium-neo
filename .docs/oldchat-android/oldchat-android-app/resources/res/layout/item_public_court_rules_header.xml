@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:background="@drawable/bg_profile_item"
+    android:padding="12dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp">
+    <TextView
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@color/color_text_primary"
+        android:id="@+id/tvRulesTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="审理规则"/>
+    <TextView
+        android:textSize="12sp"
+        android:textColor="@color/color_text_secondary"
+        android:id="@+id/tvRulesBody"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="1. 投票需提供证据（可上传截图）\102. 达到 10 票自动锁定，进入待二审\103. 锁定后仅可查看，等待管理员裁决"/>
+</LinearLayout>

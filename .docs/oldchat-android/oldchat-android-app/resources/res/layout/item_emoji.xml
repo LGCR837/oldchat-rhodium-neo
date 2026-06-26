@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:background="@drawable/bg_profile_item"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="6dp">
+    <ImageView
+        android:layout_gravity="center"
+        android:id="@+id/ivEmoji"
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:scaleType="centerCrop"
+        android:contentDescription="@null"
+        app:srcCompat="@drawable/ic_avatar_placeholder"/>
+    <ImageView
+        android:layout_gravity="top|right"
+        android:id="@+id/btnDeleteEmoji"
+        android:visibility="gone"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_margin="4dp"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:contentDescription="@null"/>
+    <TextView
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:textColor="@android:color/white"
+        android:gravity="center"
+        android:layout_gravity="top|left"
+        android:id="@+id/tvEmojiSelected"
+        android:background="#aa2a6d94"
+        android:visibility="gone"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_margin="4dp"
+        android:text="✓"/>
+</FrameLayout>

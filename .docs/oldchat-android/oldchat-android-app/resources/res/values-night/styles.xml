@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppAlertDialog" parent="@style/Theme.AppCompat.Dialog.Alert">
+        <item name="android:textColorPrimary">@color/color_text_primary</item>
+        <item name="android:textColorSecondary">@color/color_text_secondary</item>
+        <item name="android:windowBackground">@color/color_surface</item>
+        <item name="android:textColor">@color/color_text_primary</item>
+    </style>
+    <style name="AppDialogTheme" parent="@style/Theme.AppCompat.Dialog">
+        <item name="android:textColorPrimary">@color/color_text_primary</item>
+        <item name="android:textColorSecondary">@color/color_text_secondary</item>
+        <item name="android:windowBackground">@color/color_surface</item>
+        <item name="android:editTextStyle">@style/FlatInput</item>
+        <item name="android:textColor">@color/color_text_primary</item>
+    </style>
+    <style name="AppTheme" parent="@style/Theme.AppCompat.NoActionBar">
+        <item name="android:textColorPrimary">@color/color_text_primary</item>
+        <item name="android:textColorSecondary">@color/color_text_secondary</item>
+        <item name="android:buttonStyle">@style/RoundedOutlineButton</item>
+        <item name="android:windowBackground">@color/color_background</item>
+        <item name="android:editTextStyle">@style/FlatInput</item>
+        <item name="android:textColor">@color/color_text_primary</item>
+        <item name="alertDialogTheme">@style/AppAlertDialog</item>
+        <item name="buttonCornerRadius">0dp</item>
+        <item name="buttonStyle">@style/RoundedOutlineButton</item>
+        <item name="chatBubbleAvatarCornerRadius">0dp</item>
+        <item name="chatBubbleCornerRadius">0dp</item>
+        <item name="colorAccent">@color/color_accent</item>
+        <item name="colorPrimary">@color/color_primary</item>
+        <item name="colorPrimaryDark">@color/color_primary_dark</item>
+        <item name="editTextStyle">@style/FlatInput</item>
+        <item name="popupMenuStyle">@style/AppPopupMenu</item>
+    </style>
+    <style name="AppTheme.Blue" parent="@style/AppTheme">
+        <item name="colorAccent">#93c5fd</item>
+        <item name="colorPrimary">#93c5fd</item>
+        <item name="colorPrimaryDark">#60a5fa</item>
+    </style>
+    <style name="AppTheme.Brown" parent="@style/AppTheme">
+        <item name="colorAccent">#d6b89a</item>
+        <item name="colorPrimary">#d6b89a</item>
+        <item name="colorPrimaryDark">#c49a6c</item>
+    </style>
+    <style name="AppTheme.Green" parent="@style/AppTheme">
+        <item name="colorAccent">#86efac</item>
+        <item name="colorPrimary">#86efac</item>
+        <item name="colorPrimaryDark">#4ade80</item>
+    </style>
+    <style name="AppTheme.Orange" parent="@style/AppTheme">
+        <item name="colorAccent">#fdba74</item>
+        <item name="colorPrimary">#fdba74</item>
+        <item name="colorPrimaryDark">#fb923c</item>
+    </style>
+    <style name="AppTheme.Red" parent="@style/AppTheme">
+        <item name="colorAccent">#fca5a5</item>
+        <item name="colorPrimary">#fca5a5</item>
+        <item name="colorPrimaryDark">#f87171</item>
+    </style>
+    <style name="AppTheme.Teal" parent="@style/AppTheme">
+        <item name="colorAccent">#99f6e4</item>
+        <item name="colorPrimary">#99f6e4</item>
+        <item name="colorPrimaryDark">#5eead4</item>
+    </style>
+</resources>

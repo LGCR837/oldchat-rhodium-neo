@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="rectangle">
+            <corners android:radius="0dp"/>
+            <size android:height="6dp"/>
+            <solid android:color="#d6e2ec"/>
+        </shape>
+    </item>
+    <item android:id="@android:id/secondaryProgress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="0dp"/>
+                <size android:height="6dp"/>
+                <solid android:color="#bfd3e2"/>
+            </shape>
+        </clip>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="0dp"/>
+                <size android:height="6dp"/>
+                <solid android:color="@color/color_primary"/>
+            </shape>
+        </clip>
+    </item>
+</layer-list>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:background="@color/color_background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <android.support.v4.view.ViewPager
+        android:id="@+id/vpMomentGallery"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
+    <ImageView
+        android:layout_gravity="top|left"
+        android:id="@+id/btnGalleryBack"
+        android:background="@drawable/flat_button_bg"
+        android:padding="8dp"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_margin="12dp"
+        android:src="@drawable/ic_nav_back"
+        android:tint="@color/color_on_primary"
+        android:contentDescription="@null"/>
+    <TextView
+        android:textSize="12sp"
+        android:textColor="@color/color_on_primary"
+        android:layout_gravity="top|right"
+        android:id="@+id/tvGalleryIndex"
+        android:background="@drawable/bg_unread_badge"
+        android:paddingLeft="8dp"
+        android:paddingTop="4dp"
+        android:paddingRight="8dp"
+        android:paddingBottom="4dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="12dp"
+        android:contentDescription="@null"/>
+</FrameLayout>
