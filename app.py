@@ -55,7 +55,6 @@ app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 app.secret_key = secrets.token_hex(32)
 
-DEBUG_REQ = os.environ.get("DEBUG_REQ", "0") == "1"
 IS_WINDOWS = sys.platform.startswith("win")
 
 logging.basicConfig(
@@ -65,6 +64,12 @@ logging.basicConfig(
 log = logging.getLogger("oldchat")
 
 # ---------- Settings ----------
+# SETTINGS_PATH 保留环境变量 fallback（方便命令行指定配置文件）
+SETTINGS_PATH = os.environ.get(
+    "SETTINGS_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+)
+
 def _load_settings(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -76,18 +81,20 @@ def _load_settings(path):
     except Exception as e:
         log.warning("[settings] 加载失败: %s，使用默认配置", e)
     return {
-        "server": {"name": "OldChat", "version": "1.0.0", "url": ""},
+        "server": {"name": "OldChat", "version": "1.0.0", "url": "", "host": "0.0.0.0", "port": 8080},
+        "debug": True,
         "announcement": {"title": "服务器公告", "body": "这是 OldChat 兼容服务器。", "enabled": True},
         "auto_join_group": {"enabled": True, "group_id": "", "group_name": "官方群聊", "auto_create": True, "welcome_message": "欢迎加入官方群聊！"},
         "features": {},
         "limits": {"max_upload_mb": 20, "max_message_length": 2000},
     }
 
-SETTINGS_PATH = os.environ.get(
-    "SETTINGS_PATH",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
-)
 SETTINGS = _load_settings(SETTINGS_PATH)
+
+# 从 settings 读取配置，环境变量仅作为 fallback 覆盖
+DEBUG_REQ = bool(SETTINGS.get("debug", True))
+if os.environ.get("DEBUG_REQ"):
+    DEBUG_REQ = os.environ["DEBUG_REQ"] == "1"
 
 def _ensure_default_group():
     cfg = SETTINGS.get("auto_join_group", {}) or {}
@@ -1956,17 +1963,18 @@ if __name__ == "__main__":
     log.info("DB: %s", DB_PATH)
     log.info("Media dir: %s", MEDIA_DIR)
     log.info("WebSocket: enabled (eventlet=%s)", HAS_EVENTLET)
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", 8080))
+    srv = SETTINGS.get("server", {}) or {}
+    host = os.environ.get("HOST", srv.get("host", "0.0.0.0"))
+    port = int(os.environ.get("PORT", srv.get("port", 8080)))
     print()
     print("=" * 60)
     print(" OldChat 兼容服务器 已启动: http://%s:%d" % (host, port))
     print(" WebSocket 路径: ws://%s:%d/v1/ws?token=<access_token>&sid=<session_id>" % (host, port))
     if IS_WINDOWS:
-        print(" [Windows] eventlet 模式=%s（如发现请求不响应，可尝试 set DEBUG_REQ=1 看日志）" % HAS_EVENTLET)
+        print(" [Windows] eventlet 模式=%s（如发现请求不响应，可在 settings.json 打开 debug 看日志）" % HAS_EVENTLET)
     if DEBUG_REQ:
-        print(" [调试] DEBUG_REQ=1 已启用，每个请求会打印方法、路径、请求头等")
-    print(" 环境变量: HOST=<ip> PORT=<port> DEBUG_REQ=0|1")
+        print(" [调试] debug=true 已启用，每个请求会打印方法、路径、请求头等")
+    print(" 配置文件: %s" % SETTINGS_PATH)
     print("=" * 60)
     print()
     if HAS_EVENTLET:

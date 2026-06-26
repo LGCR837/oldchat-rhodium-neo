@@ -2,8 +2,11 @@
     "server": {
         "name": "OldChat Rhodium Neo",
         "version": "1.0.0",
-        "url": "https://github.com/LGCR837/oldchat-rhodium-neo"
+        "url": "https://github.com/LGCR837/oldchat-rhodium-neo",
+        "host": "0.0.0.0",
+        "port": 8080
     },
+    "debug": true,
     "announcement": {
         "title": "服务器公告",
         "body": "这是 OldChat-Rhodium-Neo 项目，一个用 Python 实现的第三方旧聊兼容服务器。仓库：https://github.com/LGCR837/oldchat-rhodium-neo",
