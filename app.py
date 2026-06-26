@@ -946,15 +946,37 @@ def friends_request():
         (g.current_user_id, target_id, g.current_user_id, now_ts()),
     )
     # Add notification for target
-    me_row = db_query_one("SELECT uid, display_name FROM users WHERE id = ?", (g.current_user_id,))
+    me_row = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (g.current_user_id,))
+    notif_data = {
+        "from_uid": me_row["uid"] if me_row else "",
+        "from_name": (me_row["display_name"] or me_row["uid"]) if me_row else "",
+        "from_avatar": me_row["avatar_url"] or "" if me_row else "",
+        "request_id": str(rid),
+        "type": "friend_request",
+    }
     try:
         db_execute(
             "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'friend_request', ?, ?, ?, ?, 0)",
             (target_id, "好友请求", "%s 请求加你为好友" % (me_row["display_name"] or me_row["uid"]),
-             json.dumps({"from_uid": me_row["uid"] if me_row else "", "request_id": str(rid)}), now_ts()),
+             json.dumps(notif_data), now_ts()),
         )
     except Exception:
         pass
+    # Push via WebSocket to target user (real-time)
+    push_to_user(target_id, {
+        "type": "friend_request",
+        "data": {
+            "id": str(rid),
+            "from_uid": me_row["uid"] if me_row else "",
+            "from_name": (me_row["display_name"] or me_row["uid"]) if me_row else "",
+            "from_avatar": me_row["avatar_url"] or "" if me_row else "",
+            "status": "pending",
+            "created_at": now_ts(),
+        },
+    })
+    if DEBUG_REQ:
+        log.info("  -> friends_request sent: rid=%s, target_id=%s, pushed=%s",
+                 rid, target_id, push_to_user(target_id, {"type": "ping"}) > 0)
     return jsonify({"request_id": str(rid), "message": "request sent", "to_uid": target["uid"]})
 
 @app.route("/v1/friends/requests", methods=["GET"])
@@ -998,10 +1020,28 @@ def friends_respond():
     )
     if not row:
         return jsonify({"code": 404, "msg": "request not found"}), 404
+    initiator_id = row["user_id"] if row["friend_id"] == g.current_user_id else row["friend_id"]
     if accept:
         db_execute("UPDATE friendships SET status = 'accepted' WHERE id = ?", (rid_int,))
-        # Also create reverse-entry so user 1 and 2 both appear in each other's friend lists
-        # (not strictly necessary given how we query, but fine as-is)
+        # Notify the initiator
+        me_row = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (g.current_user_id,))
+        try:
+            db_execute(
+                "INSERT INTO notifications (user_id, type, title, body, extra_json, created_at, is_read) VALUES (?, 'friend_accepted', ?, ?, ?, ?, 0)",
+                (initiator_id, "好友请求已通过",
+                 "%s 接受了你的好友请求" % (me_row["display_name"] or me_row["uid"] if me_row else ""),
+                 json.dumps({"from_uid": me_row["uid"] if me_row else ""}), now_ts()),
+            )
+        except Exception:
+            pass
+        push_to_user(initiator_id, {
+            "type": "friend_accepted",
+            "data": {
+                "uid": me_row["uid"] if me_row else "",
+                "name": (me_row["display_name"] or me_row["uid"]) if me_row else "",
+                "avatar": me_row["avatar_url"] or "" if me_row else "",
+            },
+        })
     else:
         db_execute("DELETE FROM friendships WHERE id = ?", (rid_int,))
     return jsonify({"status": "accepted" if accept else "rejected"})
