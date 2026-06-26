@@ -240,6 +240,7 @@ def init_db():
                 avatar_url TEXT,
                 cover_url TEXT,
                 bio TEXT DEFAULT '',
+                signature TEXT DEFAULT '',
                 online INTEGER DEFAULT 0,
                 last_seen INTEGER,
                 created_at INTEGER
@@ -369,6 +370,16 @@ def init_db():
                 UNIQUE(chat_id, user_id)
             );
         """)
+        # 迁移：旧数据库升级
+        _migrations = [
+            ("users", "signature", "TEXT DEFAULT ''"),
+            ("group_members", "last_read_msg_id", "INTEGER DEFAULT 0"),
+        ]
+        for table, col, definition in _migrations:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            except Exception:
+                pass
         conn.commit()
     finally:
         conn.close()
@@ -466,6 +477,7 @@ def user_to_dict(row) -> dict:
         "avatar_url": row["avatar_url"] or "",
         "cover_url": row["cover_url"] or "",
         "bio": row["bio"] or "",
+        "signature": row["signature"] if "signature" in row.keys() else "",
         "online": 1 if row["id"] in ws_online_user_ids() else 0,
         "last_seen": row["last_seen"] or row["created_at"],
         "created_at": row["created_at"],
@@ -750,11 +762,15 @@ def user_update_profile():
     _auth = require_auth()
     if _auth: return _auth
     body = req_json()
+    if DEBUG_REQ:
+        log.info("  -> user_update_profile: body_keys=%s", list(body.keys()))
     sets, params = [], []
     if body.get("display_name") is not None:
         sets.append("display_name = ?"); params.append(body["display_name"])
     if body.get("bio") is not None:
         sets.append("bio = ?"); params.append(body["bio"])
+    if body.get("signature") is not None:
+        sets.append("signature = ?"); params.append(body["signature"])
     if body.get("avatar_url") is not None:
         sets.append("avatar_url = ?"); params.append(body["avatar_url"])
     if body.get("cover_url") is not None:
@@ -762,17 +778,93 @@ def user_update_profile():
     if sets:
         params.append(g.current_user_id)
         db_execute("UPDATE users SET %s WHERE id = ?" % ", ".join(sets), tuple(params))
+        if DEBUG_REQ:
+            log.info("  -> user_update_profile: updated fields=%s", sets)
     row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
+    if DEBUG_REQ and row:
+        log.info("  -> user_update_profile result: signature='%s', cover_url='%s'",
+                 row["signature"] if "signature" in row.keys() else "N/A",
+                 row["cover_url"] or "")
     return jsonify(user_to_dict(row))
+
+@app.route("/v1/me/uid", methods=["POST"])
+def user_update_uid():
+    _auth = require_auth()
+    if _auth: return _auth
+    body = req_json()
+    new_uid = (body.get("uid") or "").strip().upper()
+    if DEBUG_REQ:
+        log.info("  -> user_update_uid: new_uid=%s, body_keys=%s", new_uid, list(body.keys()))
+    if not new_uid:
+        return jsonify({"code": 400, "msg": "missing uid"}), 400
+    if len(new_uid) < 3 or len(new_uid) > 32:
+        return jsonify({"code": 400, "msg": "uid length must be 3-32"}), 400
+    existing = db_query_one("SELECT id FROM users WHERE uid = ?", (new_uid,))
+    if existing and existing["id"] != g.current_user_id:
+        return jsonify({"code": 409, "msg": "uid already exists"}), 409
+    db_execute("UPDATE users SET uid = ? WHERE id = ?", (new_uid, g.current_user_id))
+    row = db_query_one("SELECT * FROM users WHERE id = ?", (g.current_user_id,))
+    if DEBUG_REQ:
+        log.info("  -> user_update_uid success: new_uid=%s", row["uid"] if row else "")
+    return jsonify(user_to_dict(row))
+
+def _get_upload_file(candidates):
+    """从 request.files 中获取上传文件，支持多种字段名，兜底取第一个非空文件"""
+    for name in candidates:
+        f = request.files.get(name)
+        if f and f.filename:
+            return f
+    for key in request.files:
+        f = request.files[key]
+        if f and f.filename:
+            return f
+    return None
 
 @app.route("/v1/me/avatar", methods=["POST"])
 def user_update_avatar():
     _auth = require_auth()
     if _auth: return _auth
-    body = req_json()
-    avatar = body.get("avatar_url") or ""
-    db_execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar, g.current_user_id))
-    return jsonify({"avatar_url": avatar})
+    f = _get_upload_file(["file", "avatar", "image", "photo", "picture", "upload"])
+    if f and f.filename:
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
+            ext = ".png"
+        filename = "avatar_" + secrets.token_hex(12) + ext
+        filepath = os.path.join(MEDIA_DIR, filename)
+        f.save(filepath)
+        avatar_url = "/media/" + filename
+    else:
+        body = req_json()
+        avatar_url = body.get("avatar_url") or body.get("url") or ""
+    if avatar_url:
+        db_execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar_url, g.current_user_id))
+    if DEBUG_REQ:
+        log.info("  -> avatar upload result: url=%s, has_file=%s, files_keys=%s",
+                 avatar_url, f is not None, list(request.files.keys()))
+    return jsonify({"avatar_url": avatar_url})
+
+@app.route("/v1/me/cover", methods=["POST"])
+def user_update_cover():
+    _auth = require_auth()
+    if _auth: return _auth
+    f = _get_upload_file(["file", "cover", "image", "photo", "background", "upload"])
+    if f and f.filename:
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"):
+            ext = ".png"
+        filename = "cover_" + secrets.token_hex(12) + ext
+        filepath = os.path.join(MEDIA_DIR, filename)
+        f.save(filepath)
+        cover_url = "/media/" + filename
+    else:
+        body = req_json()
+        cover_url = body.get("cover_url") or body.get("url") or ""
+    if cover_url:
+        db_execute("UPDATE users SET cover_url = ? WHERE id = ?", (cover_url, g.current_user_id))
+    if DEBUG_REQ:
+        log.info("  -> cover upload result: url=%s, has_file=%s, files_keys=%s",
+                 cover_url, f is not None, list(request.files.keys()))
+    return jsonify({"cover_url": cover_url})
 
 @app.route("/v1/me/presence", methods=["POST"])
 def user_presence():
@@ -1567,6 +1659,7 @@ def moments_user():
             "author_avatar": author["avatar_url"] or "" if author else "",
             "body": r["body"] or "",
             "media_url": r["media_url"] or "",
+            "image_url": r["media_url"] or "",
             "thumb_url": r["thumb_url"] or "",
             "created_at": r["created_at"],
             "likes": likes_count["c"] if likes_count else 0,
@@ -1579,9 +1672,9 @@ def moments_create():
     _auth = require_auth()
     if _auth: return _auth
     body = req_json()
-    text = body.get("body") or ""
-    media_url = body.get("media_url") or ""
-    thumb_url = body.get("thumb_url") or ""
+    text = body.get("body") or body.get("text") or ""
+    media_url = body.get("media_url") or body.get("image_url") or ""
+    thumb_url = body.get("thumb_url") or media_url or ""
     if not text and not media_url:
         return jsonify({"code": 400, "msg": "empty moment"}), 400
     moment_id = gen_moment_id()
@@ -1590,7 +1683,20 @@ def moments_create():
         "INSERT INTO moments (moment_id, user_id, body, media_url, thumb_url, created_at, likes) VALUES (?, ?, ?, ?, ?, ?, 0)",
         (moment_id, g.current_user_id, text, media_url, thumb_url, created),
     )
-    return jsonify({"moment_id": moment_id, "body": text, "media_url": media_url, "created_at": created})
+    author = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (g.current_user_id,))
+    return {
+        "moment_id": moment_id,
+        "uid": author["uid"] if author else "",
+        "author_name": (author["display_name"] or author["uid"]) if author else "",
+        "author_avatar": author["avatar_url"] or "" if author else "",
+        "body": text,
+        "media_url": media_url,
+        "image_url": media_url,
+        "thumb_url": thumb_url,
+        "created_at": created,
+        "likes": 0,
+        "comments": 0,
+    }
 
 @app.route("/v1/moments/timeline", methods=["GET"])
 def moments_timeline():
@@ -1618,6 +1724,7 @@ def moments_timeline():
             "author_avatar": author["avatar_url"] or "" if author else "",
             "body": r["body"] or "",
             "media_url": r["media_url"] or "",
+            "image_url": r["media_url"] or "",
             "thumb_url": r["thumb_url"] or "",
             "created_at": r["created_at"],
             "likes": lc["c"] if lc else 0,
@@ -1630,9 +1737,14 @@ def moments_like():
     _auth = require_auth()
     if _auth: return _auth
     body = req_json()
-    moment_id = (body.get("moment_id") or "").strip()
+    moment_id = (body.get("moment_id") or body.get("id") or "").strip()
+    if DEBUG_REQ:
+        log.info("  -> moments_like: moment_id='%s', body_keys=%s", moment_id, list(body.keys()))
     if not moment_id:
         return jsonify({"code": 400, "msg": "missing moment_id"}), 400
+    m = db_query_one("SELECT moment_id FROM moments WHERE moment_id = ?", (moment_id,))
+    if not m:
+        return jsonify({"code": 404, "msg": "moment not found"}), 404
     try:
         db_execute("INSERT INTO moment_likes (moment_id, user_id, created_at) VALUES (?, ?, ?)",
                    (moment_id, g.current_user_id, now_ts()))
