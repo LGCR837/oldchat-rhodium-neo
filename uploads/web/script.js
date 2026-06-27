@@ -1219,7 +1219,7 @@ document.addEventListener('DOMContentLoaded', () => {
             from_name: myName,
             from_avatar: myAvatar || '',
             body: '',
-            msg_type: 'file',
+            msg_type: 'resource',
             media_url: URL.createObjectURL(file),
             thumb_url: null,
             created_at: Math.floor(Date.now() / 1000),

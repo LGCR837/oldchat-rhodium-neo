@@ -516,9 +516,10 @@ def init_web(app):
                 )
                 welcome = (app_module.SETTINGS.get("auto_join_group", {}) or {}).get("welcome_message", "")
                 if welcome:
+                    body = display_name + " " + welcome
                     app_module.db_execute(
                         "INSERT INTO group_messages (group_id, from_id, body, msg_type, created_at) VALUES (?, 0, ?, 'system', ?)",
-                        (default_gid, welcome, now),
+                        (default_gid, body, now),
                     )
             except Exception as _e:
                 app_module.log.warning("[web register] auto-join failed: %s", _e)
