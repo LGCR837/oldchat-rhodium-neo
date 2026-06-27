@@ -174,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadContacts() {
         try {
-            const res = await fetch('/api/contacts');
+            const res = await fetch('/web/api/contacts');
             const data = await res.json();
             if (data.error) { alert(data.error); return; }
             contacts = data;
@@ -188,7 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function initWebSocket() {
         try {
-            const res = await fetch('/api/ws_token');
+            const res = await fetch('/web/api/ws_token');
             const data = await res.json();
             if (!data.token) return;
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -242,7 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
             appendMessage(msgObj, convKey, seenMsgIds[convKey]);
             if (currentConv && currentConv.key === convKey) {
                 scrollToBottom(true);
-                fetch(`/api/mark_read/direct/${fromUid}`, { method: 'PUT' });
+                fetch(`/web/api/mark_read/direct/${fromUid}`, { method: 'PUT' });
             }
         } else if (msg.type === 'group_message') {
             const d = msg.data || {};
@@ -265,7 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
             appendMessage(msgObj, convKey, seenMsgIds[convKey]);
             if (currentConv && currentConv.key === convKey) {
                 scrollToBottom(true);
-                fetch(`/api/mark_read/group/${groupId}`, { method: 'PUT' });
+                fetch(`/web/api/mark_read/group/${groupId}`, { method: 'PUT' });
             }
         }
     }
@@ -332,7 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const reqId = ++switchRequestId;
     
         try {
-            const res = await fetch(`/api/messages/${type}/${id}?limit=${PAGE_SIZE}&offset=0`);
+            const res = await fetch(`/web/api/messages/${type}/${id}?limit=${PAGE_SIZE}&offset=0`);
             const data = await res.json();
     
             if (reqId !== switchRequestId) return;
@@ -359,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 appendMessage(msg, convKey, currentSeen);
             });
             scrollToBottom(true);
-            await fetch(`/api/mark_read/${type}/${id}`, { method: 'PUT' });
+            await fetch(`/web/api/mark_read/${type}/${id}`, { method: 'PUT' });
 
             // 设置滚动到顶部加载更多
             messagesContainer._scrollHandler = async () => {
@@ -371,7 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const loadReqId = ++isLoadingMoreReqId;
                 const currentHeight = messagesContainer.scrollHeight;
                 try {
-                    const res = await fetch(`/api/messages/${type}/${id}?limit=${PAGE_SIZE}&offset=${convOffsets[convKey]}`);
+                    const res = await fetch(`/web/api/messages/${type}/${id}?limit=${PAGE_SIZE}&offset=${convOffsets[convKey]}`);
                     const data = await res.json();
                     if (loadReqId !== isLoadingMoreReqId) return;
                     if (data.error) return;
@@ -428,7 +428,65 @@ document.addEventListener('DOMContentLoaded', () => {
         const msgType = msg.msg_type || 'text';
         let content = '';
 
-        if (msgType === 'text') {
+        if (msgType === 'image') {
+            const mediaUrl = msg.media_url || '';
+            content = `<img src="${mediaUrl}" style="max-width:200px; max-height:200px; cursor:pointer;" class="chat-image" onclick="openImageViewer('${mediaUrl.replace(/'/g, "\\'")}')">`;
+        } else if (msgType === 'video') {
+            content = `<video controls style="max-width:200px;"><source src="${msg.media_url || ''}"></video>`;
+        } else if (msgType === 'audio') {
+            content = `<audio controls style="max-width:200px;" src="${msg.media_url || ''}"></audio>`;
+        } else if (msgType === 'resource') {
+            // 支持嵌套 v2 JSON body（如音乐分享等）
+            let fileName = '';
+            let displayText = '';
+            if (msg.body && msg.body.trim().startsWith('{')) {
+                try {
+                    const obj = JSON.parse(msg.body);
+                    if (obj.v === 2) {
+                        displayText = obj.text || '';
+                        if (obj.quote) {
+                            const quote = obj.quote;
+                            displayText = `<div class="quote-block" data-quoted-id="${escapeHtml(quote.id || '')}">
+                                <div class="quote-sender">${escapeHtml(quote.from_name || quote.from_uid || '')}</div>
+                                <div>${escapeHtml(quote.text || '')}</div>
+                            </div>` + (displayText ? `<div style="white-space: pre-wrap; word-break: break-word;">${displayText}</div>` : '');
+                        }
+                        if (obj.mentions && Array.isArray(obj.mentions)) {
+                            obj.mentions.forEach(m => {
+                                const name = m.name || m.uid;
+                                const regex = new RegExp(`@${escapeRegExp(name)}`, 'g');
+                                displayText = displayText.replace(regex,
+                                    `<span class="mention-highlight" data-uid="${escapeHtml(m.uid || '')}">@${escapeHtml(name)}</span>`);
+                            });
+                        }
+                        displayText = displayText.replace(/\n/g, '<br>');
+                    } else {
+                        fileName = msg.body;
+                    }
+                } catch (e) {
+                    fileName = msg.body;
+                }
+            } else {
+                fileName = msg.body || '';
+            }
+            if (!fileName && msg.media_url) {
+                const urlParts = msg.media_url.split('/');
+                fileName = decodeURIComponent(urlParts.pop()) || '文件';
+            }
+            const fileCardHtml = `<div class="file-card">
+                <div class="file-info">
+                    <div class="file-name">${escapeHtml(fileName)}</div>
+                </div>
+                <a href="${msg.media_url}" target="_blank" class="file-download-btn">⬇</a>
+            </div>`;
+            content = displayText
+                ? `<div style="margin-bottom:6px;">${displayText}</div>${fileCardHtml}`
+                : fileCardHtml;
+        } else if (msgType === 'file' || (msg.media_url && msgType !== 'text')) {
+            const fileUrl = msg.media_url || '';
+            const fileName = msg.body || fileUrl.split('/').pop();
+            content = `<a href="${fileUrl}" target="_blank" class="file-download-btn" style="color:var(--link-other);">📎 ${escapeHtml(fileName)}</a>`;
+        } else if (msgType === 'text') {
             let body = msg.body || '';
             let quoteHtml = '';
 
@@ -470,11 +528,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 body = body.replace(/\n/g, '<br>');
                 content = `<div style="white-space: pre-wrap; word-break: break-word;">${body}</div>`;
             }
-        } else if (msgType === 'image') {
-            const mediaUrl = msg.media_url || '';
-            content = `<img src="${mediaUrl}" style="max-width:200px; max-height:200px; cursor:pointer;" class="chat-image" onclick="openImageViewer('${mediaUrl.replace(/'/g, "\\'")}')">`;
-        } else if (msgType === 'video') {
-            content = `<video controls style="max-width:200px;"><source src="${msg.media_url || ''}"></video>`;
         } else if (msgType === 'red_packet') {
             let packetData = null;
             try {
@@ -519,55 +572,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const durStr = dur ? mins + ':' + (secs < 10 ? '0' : '') + secs : '0:00';
                 content = `[语音 ${durStr}]`;
             }
-        } else if (msgType === 'resource') {
-            // 支持嵌套 v2 JSON body（如音乐分享等）
-            let fileName = '';
-            let displayText = '';
-            if (msg.body && msg.body.trim().startsWith('{')) {
-                try {
-                    const obj = JSON.parse(msg.body);
-                    if (obj.v === 2) {
-                        displayText = obj.text || '';
-                        if (obj.quote) {
-                            const quote = obj.quote;
-                            displayText = `<div class="quote-block" data-quoted-id="${escapeHtml(quote.id || '')}">
-                                <div class="quote-sender">${escapeHtml(quote.from_name || quote.from_uid || '')}</div>
-                                <div>${escapeHtml(quote.text || '')}</div>
-                            </div>` + (displayText ? `<div style="white-space: pre-wrap; word-break: break-word;">${displayText}</div>` : '');
-                        }
-                        if (obj.mentions && Array.isArray(obj.mentions)) {
-                            obj.mentions.forEach(m => {
-                                const name = m.name || m.uid;
-                                const regex = new RegExp(`@${escapeRegExp(name)}`, 'g');
-                                displayText = displayText.replace(regex,
-                                    `<span class="mention-highlight" data-uid="${escapeHtml(m.uid || '')}">@${escapeHtml(name)}</span>`);
-                            });
-                        }
-                        displayText = displayText.replace(/\n/g, '<br>');
-                    } else {
-                        fileName = msg.body;
-                    }
-                } catch (e) {
-                    fileName = msg.body;
-                }
-            } else {
-                fileName = msg.body || '';
-            }
-            // 从 URL 提取文件名作为兜底
-            if (!fileName && msg.media_url) {
-                const urlParts = msg.media_url.split('/');
-                fileName = decodeURIComponent(urlParts.pop()) || '文件';
-            }
-            const fileCardHtml = `<div class="file-card">
-                <div class="file-info">
-                    <div class="file-name">${escapeHtml(fileName)}</div>
-                </div>
-                <a href="${msg.media_url}" target="_blank" class="file-download-btn">⬇</a>
-            </div>`;
-            // 如果有展示文本，放在文件卡片上方
-            content = displayText
-                ? `<div style="margin-bottom:6px;">${displayText}</div>${fileCardHtml}`
-                : fileCardHtml;
         } else {
             content = `[${msgType}] ${escapeHtml(msg.body || '')}`;
         }
@@ -1074,7 +1078,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const res = await fetch('/api/send', {
+            const res = await fetch('/web/api/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -1206,22 +1210,55 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('file', file);
         formData.append('conv_type', currentConv.type);
         formData.append('to_id', currentConv.id);
+
+        // 立即显示发送中消息（半透明）
+        const tempId = 'temp_' + Date.now();
+        const tempMsg = {
+            id: tempId,
+            from_uid: myUid,
+            from_name: myName,
+            from_avatar: myAvatar || '',
+            body: '',
+            msg_type: 'file',
+            media_url: URL.createObjectURL(file),
+            thumb_url: null,
+            created_at: Math.floor(Date.now() / 1000),
+        };
+        if (currentConv.type === 'group') {
+            tempMsg.group_id = currentConv.id;
+        }
+        appendMessage(tempMsg, currentConv.key, seenMsgIds[currentConv.key]);
+        scrollToBottom(true);
+        const tempEl = messagesContainer.querySelector(`[data-msg-id="${tempId}"]`);
+        if (tempEl) {
+            tempEl.style.opacity = '0.5';
+        }
+
         try {
-            const res = await fetch('/api/upload_and_send', {
+            const res = await fetch('/web/api/upload_and_send', {
                 method: 'POST',
                 body: formData
             });
             const data = await res.json();
-            if (data.error) {
-                alert('发送失败: ' + data.error);
+            if (data.error || !data.message || !data.message.id) {
+                if (tempEl) tempEl.remove();
+                seenMsgIds[currentConv.key]?.delete(tempId);
+                alert('发送失败: ' + (data.error || '未知错误'));
                 return;
             }
-            if (data.message) {
-                appendMessage(data.message, currentConv.key, seenMsgIds[currentConv.key]);
-                scrollToBottom(true);
+            const msg = data.message;
+            // 替换临时消息
+            if (tempEl) {
+                const newEl = createMessageElement(msg, currentConv.key, seenMsgIds[currentConv.key]);
+                if (newEl) {
+                    tempEl.replaceWith(newEl);
+                }
             }
+            scrollToBottom(true);
         } catch (error) {
             console.error(error);
+            if (tempEl) tempEl.remove();
+            seenMsgIds[currentConv.key]?.delete(tempId);
             alert('网络错误，发送失败');
         }
     }
@@ -1382,10 +1419,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const isMobile = () => window.innerWidth <= 768;
 
     function expandChat() {
-        if (sidebar.classList.contains('collapsed')) {
+        if (isMobile()) {
             chatArea.style.marginLeft = '0px';
         } else {
-            chatArea.style.marginLeft = isMobile() ? '100%' : '280px';
+            chatArea.style.marginLeft = sidebar.classList.contains('collapsed') ? '0px' : '280px';
         }
     }
 
@@ -1505,7 +1542,7 @@ document.addEventListener('DOMContentLoaded', () => {
         card.querySelector('.rp-status').textContent = '领取中...';
 
         try {
-            const res = await fetch('/api/redpacket/claim', {
+            const res = await fetch('/web/api/redpacket/claim', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ packet_id: packetId })
@@ -1532,7 +1569,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (existing) existing.remove();
     
         try {
-            const res = await fetch('/api/emoticons');
+            const res = await fetch('/web/api/emoticons');
             const data = await res.json();
             const images = data.images || [];
             if (images.length === 0) {
@@ -1558,7 +1595,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const blob = await response.blob();
                         const formData = new FormData();
                         formData.append('file', blob, img);
-                        const uploadRes = await fetch('/api/upload_only', {
+                        const uploadRes = await fetch('/web/api/upload_only', {
                             method: 'POST',
                             body: formData
                         });
@@ -1622,7 +1659,7 @@ document.addEventListener('DOMContentLoaded', () => {
             plazaLoading = true;
             loadMoreBtn.textContent = '加载中…';
             try {
-                const res = await fetch(`/api/emoji/plaza?limit=20&offset=${plazaOffset}`);
+                const res = await fetch(`/web/api/emoji/plaza?limit=20&offset=${plazaOffset}`);
                 const data = await res.json();
                 const items = data.items || [];
                 if (items.length === 0) {

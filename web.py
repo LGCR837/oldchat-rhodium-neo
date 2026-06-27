@@ -649,6 +649,8 @@ def init_web(app):
                     "from_avatar": sender["avatar_url"] or "" if sender else "",
                     "body": m["body"] or "",
                     "msg_type": m["msg_type"] or "text",
+                    "media_url": m["media_url"] or "",
+                    "thumb_url": m["thumb_url"] or "",
                     "created_at": m["created_at"],
                     "is_me": m["from_id"] == my_id,
                 })
@@ -680,6 +682,8 @@ def init_web(app):
                         "from_avatar": "",
                         "body": m["body"] or "",
                         "msg_type": m["msg_type"] or "text",
+                        "media_url": m["media_url"] or "",
+                        "thumb_url": m["thumb_url"] or "",
                         "created_at": m["created_at"],
                         "is_me": False,
                         "group_id": target_id,
@@ -693,6 +697,8 @@ def init_web(app):
                         "from_avatar": sender["avatar_url"] or "" if sender else "",
                         "body": m["body"] or "",
                         "msg_type": m["msg_type"] or "text",
+                        "media_url": m["media_url"] or "",
+                        "thumb_url": m["thumb_url"] or "",
                         "created_at": m["created_at"],
                         "is_me": m["from_id"] == my_id,
                         "group_id": target_id,
@@ -741,7 +747,9 @@ def init_web(app):
         media_url = data.get("media_url") or None
         thumb_url = data.get("thumb_url") or None
         burn_after_seconds = int(data.get("burn_after_seconds") or 0)
-        if not target_id or not body:
+        if not target_id:
+            return jsonify({"error": "参数错误"}), 400
+        if not body and not media_url and msg_type == "text":
             return jsonify({"error": "参数错误"}), 400
         my_id = user["id"]
         my_uid = user["uid"]
@@ -756,24 +764,29 @@ def init_web(app):
                 "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
                 (my_id, target["id"], body, msg_type, media_url, thumb_url, burn_after_seconds, now),
             )
-            try:
-                app_module.push_to_user(target["id"], {
-                    "type": "direct_message",
-                    "data": {
-                        "id": mid, "from_uid": my_uid, "from_name": my_name,
-                        "from_avatar": my_avatar, "to_uid": target["uid"],
-                        "body": body, "msg_type": msg_type, "created_at": now,
-                        "media_url": media_url, "thumb_url": thumb_url,
-                    },
-                })
-            except Exception:
-                pass
-            return jsonify({
-                "id": mid, "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
-                "media_url": media_url, "thumb_url": thumb_url,
+            msg_dict = {
+                "id": str(mid),
+                "thread_id": target["uid"],
+                "from_uid": my_uid,
+                "to_uid": target["uid"],
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": burn_after_seconds,
+                "burn_after_seconds": burn_after_seconds,
                 "created_at": now,
-            })
+                "is_read": 0,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
+            }
+            try:
+                sent = app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_dict})
+                app_module.log.info("[web_send] push to user_id=%s, sent=%s", target["id"], sent)
+            except Exception as e:
+                app_module.log.warning("[web_send] push error: %s", e)
+            return jsonify(msg_dict)
         elif conv_type == "group":
             group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
             if not group:
@@ -788,30 +801,31 @@ def init_web(app):
                 "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (gid_str, my_id, body, msg_type, media_url, thumb_url, now),
             )
+            msg_dict = {
+                "id": str(mid),
+                "group_id": group["group_id"],
+                "thread_id": group["group_id"],
+                "from_uid": my_uid,
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": 0,
+                "burn_after_seconds": 0,
+                "created_at": now,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
+            }
             try:
                 members = app_module.db_query_all(
                     "SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?", (gid_str, my_id),
                 )
                 for m in members:
-                    app_module.push_to_user(m["user_id"], {
-                        "type": "group_message",
-                        "data": {
-                            "id": mid, "group_id": group["group_id"],
-                            "group_name": group["name"], "from_uid": my_uid,
-                            "from_name": my_name, "from_avatar": my_avatar,
-                            "body": body, "msg_type": msg_type, "created_at": now,
-                            "media_url": media_url, "thumb_url": thumb_url,
-                        },
-                    })
+                    app_module.push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
             except Exception:
                 pass
-            return jsonify({
-                "id": mid, "group_id": group["group_id"],
-                "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
-                "media_url": media_url, "thumb_url": thumb_url,
-                "created_at": now,
-            })
+            return jsonify(msg_dict)
         return jsonify({"error": "未知类型"}), 400
 
     def web_api_unread():
@@ -830,11 +844,114 @@ def init_web(app):
         return jsonify({"success": True})
 
     def web_api_upload_and_send():
-        from flask import jsonify
+        from flask import request, jsonify
+        import app as app_module
+        import secrets
+        import os
         user = _web_current_user()
         if not user:
             return jsonify({"error": "未登录"}), 401
-        return jsonify({"error": "暂未实现"}), 501
+        if "file" not in request.files:
+            return jsonify({"error": "no file"}), 400
+        f = request.files["file"]
+        if not f or f.filename == "":
+            return jsonify({"error": "empty file"}), 400
+        ext = os.path.splitext(f.filename)[1].lower()
+        filename = secrets.token_hex(16) + ext
+        filepath = os.path.join(app_module.MEDIA_DIR, filename)
+        f.save(filepath)
+        media_url = "/media/" + filename
+        thumb_url = media_url
+        conv_type = request.form.get("conv_type", "direct")
+        target_id = request.form.get("to_id", "")
+        if not target_id:
+            return jsonify({"error": "no target_id"}), 400
+        # body 存入原始文件名，客户端显示用
+        original_filename = f.filename or filename
+        body = request.form.get("body", "") or original_filename
+        # 根据扩展名自动判断 msg_type
+        img_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'}
+        vid_exts = {'.mp4', '.webm', '.avi', '.mov', '.mkv'}
+        aud_exts = {'.mp3', '.wav', '.ogg', '.aac', '.m4a', '.flac'}
+        if ext in img_exts:
+            msg_type = "image"
+        elif ext in vid_exts:
+            msg_type = "video"
+        elif ext in aud_exts:
+            msg_type = "audio"
+        else:
+            msg_type = "resource"
+        my_id = user["id"]
+        my_uid = user["uid"]
+        my_name = user["display_name"] or my_uid
+        my_avatar = user["avatar_url"] or ""
+        now = app_module.now_ts()
+        if conv_type == "direct":
+            target = app_module.db_query_one("SELECT id, uid, display_name FROM users WHERE uid = ?", (target_id.upper(),))
+            if not target:
+                return jsonify({"error": "用户不存在"}), 404
+            mid = app_module.db_execute(
+                "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+                (my_id, target["id"], body, msg_type, media_url, thumb_url, now),
+            )
+            msg_dict = {
+                "id": str(mid),
+                "thread_id": target["uid"],
+                "from_uid": my_uid,
+                "to_uid": target["uid"],
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": 0,
+                "burn_after_seconds": 0,
+                "created_at": now,
+                "is_read": 0,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
+            }
+            try:
+                app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_dict})
+            except Exception:
+                pass
+            return jsonify({"message": msg_dict})
+        elif conv_type == "group":
+            group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
+            if not group:
+                return jsonify({"error": "群不存在"}), 404
+            gid_str = group["group_id"]
+            member = app_module.db_query_one("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?", (gid_str, my_id))
+            if not member:
+                return jsonify({"error": "不是群成员"}), 403
+            mid = app_module.db_execute(
+                "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (gid_str, my_id, body, msg_type, media_url, thumb_url, now),
+            )
+            msg_dict = {
+                "id": str(mid),
+                "group_id": group["group_id"],
+                "thread_id": group["group_id"],
+                "from_uid": my_uid,
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": 0,
+                "burn_after_seconds": 0,
+                "created_at": now,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
+            }
+            try:
+                members = app_module.db_query_all("SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?", (gid_str, my_id))
+                for m in members:
+                    app_module.push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
+            except Exception:
+                pass
+            return jsonify({"message": msg_dict})
+        return jsonify({"error": "未知类型"}), 400
 
     def web_api_emoticons():
         from flask import jsonify
