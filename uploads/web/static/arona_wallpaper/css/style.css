@@ -1,0 +1,36 @@
+@font-face { font-family: NotoSans; src: url('font\\NotoSans-Regular.ttf'); }
+
+body {
+  overflow: hidden;
+  user-select: none;
+  margin: 0;
+}
+
+.textbox{
+  position: absolute;
+  width: 300px;
+  margin: 0 auto;
+  padding: 10px;
+  z-index: 10;
+  font-size: 24px;
+  font-family: NotoSans, 'Lucida Console';
+  text-align: center;
+  background-color: rgba(255, 255, 255, 0.87);
+  box-shadow: 5px 5px 1px rgba(0, 0, 0, 0.26);
+  border: 1px rgba(255,255,255,0.9);
+  border-radius: 10px;
+  opacity: 0;
+  transition-property: left, top, opacity;
+  transition-duration:  1ms, 1ms, 0.5s;
+}
+
+/* .textbox::after{
+  content: '';
+  width: 0;
+  height: 0;
+  top: 10px;
+  right: -20px;
+  position: absolute;
+  border: 10px solid;
+  border-color: transparent transparent transparent rgba(255,255,255,0.9) ;
+} */
