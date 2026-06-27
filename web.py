@@ -762,24 +762,28 @@ def init_web(app):
                 "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
                 (my_id, target["id"], body, msg_type, media_url, thumb_url, burn_after_seconds, now),
             )
+            msg_dict = {
+                "id": str(mid),
+                "thread_id": target["uid"],
+                "from_uid": my_uid,
+                "to_uid": target["uid"],
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": burn_after_seconds,
+                "burn_after_seconds": burn_after_seconds,
+                "created_at": now,
+                "is_read": 0,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
+            }
             try:
-                app_module.push_to_user(target["id"], {
-                    "type": "direct_message",
-                    "data": {
-                        "id": mid, "from_uid": my_uid, "from_name": my_name,
-                        "from_avatar": my_avatar, "to_uid": target["uid"],
-                        "body": body, "msg_type": msg_type, "created_at": now,
-                        "media_url": media_url, "thumb_url": thumb_url,
-                    },
-                })
+                app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_dict})
             except Exception:
                 pass
-            return jsonify({
-                "id": mid, "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
-                "media_url": media_url, "thumb_url": thumb_url,
-                "created_at": now,
-            })
+            return jsonify(msg_dict)
         elif conv_type == "group":
             group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
             if not group:
@@ -794,30 +798,31 @@ def init_web(app):
                 "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (gid_str, my_id, body, msg_type, media_url, thumb_url, now),
             )
+            msg_dict = {
+                "id": str(mid),
+                "group_id": group["group_id"],
+                "thread_id": group["group_id"],
+                "from_uid": my_uid,
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": 0,
+                "burn_after_seconds": 0,
+                "created_at": now,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
+            }
             try:
                 members = app_module.db_query_all(
                     "SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?", (gid_str, my_id),
                 )
                 for m in members:
-                    app_module.push_to_user(m["user_id"], {
-                        "type": "group_message",
-                        "data": {
-                            "id": mid, "group_id": group["group_id"],
-                            "group_name": group["name"], "from_uid": my_uid,
-                            "from_name": my_name, "from_avatar": my_avatar,
-                            "body": body, "msg_type": msg_type, "created_at": now,
-                            "media_url": media_url, "thumb_url": thumb_url,
-                        },
-                    })
+                    app_module.push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
             except Exception:
                 pass
-            return jsonify({
-                "id": mid, "group_id": group["group_id"],
-                "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
-                "media_url": media_url, "thumb_url": thumb_url,
-                "created_at": now,
-            })
+            return jsonify(msg_dict)
         return jsonify({"error": "未知类型"}), 400
 
     def web_api_unread():
@@ -858,7 +863,9 @@ def init_web(app):
         target_id = request.form.get("to_id", "")
         if not target_id:
             return jsonify({"error": "no target_id"}), 400
-        body = request.form.get("body", "")
+        # body 存入原始文件名，客户端显示用
+        original_filename = f.filename or filename
+        body = request.form.get("body", "") or original_filename
         # 根据扩展名自动判断 msg_type
         img_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'}
         vid_exts = {'.mp4', '.webm', '.avi', '.mov', '.mkv'}
@@ -884,17 +891,28 @@ def init_web(app):
                 "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
                 (my_id, target["id"], body, msg_type, media_url, thumb_url, now),
             )
-            msg_data = {
-                "id": mid, "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
-                "media_url": media_url, "thumb_url": thumb_url,
+            msg_dict = {
+                "id": str(mid),
+                "thread_id": target["uid"],
+                "from_uid": my_uid,
+                "to_uid": target["uid"],
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": 0,
+                "burn_after_seconds": 0,
                 "created_at": now,
+                "is_read": 0,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
             }
             try:
-                app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_data})
+                app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_dict})
             except Exception:
                 pass
-            return jsonify({"message": msg_data})
+            return jsonify({"message": msg_dict})
         elif conv_type == "group":
             group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
             if not group:
@@ -907,19 +925,29 @@ def init_web(app):
                 "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (gid_str, my_id, body, msg_type, media_url, thumb_url, now),
             )
-            msg_data = {
-                "id": mid, "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
-                "media_url": media_url, "thumb_url": thumb_url,
-                "created_at": now, "group_id": target_id,
+            msg_dict = {
+                "id": str(mid),
+                "group_id": group["group_id"],
+                "thread_id": group["group_id"],
+                "from_uid": my_uid,
+                "body": body,
+                "msg_type": msg_type,
+                "media_url": media_url or "",
+                "thumb_url": thumb_url or "",
+                "duration_ms": 0,
+                "burn_after_seconds": 0,
+                "created_at": now,
+                "status": 1,
+                "from_name": my_name,
+                "from_avatar": my_avatar,
             }
             try:
                 members = app_module.db_query_all("SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?", (gid_str, my_id))
                 for m in members:
-                    app_module.push_to_user(m["user_id"], {"type": "group_message", "data": msg_data})
+                    app_module.push_to_user(m["user_id"], {"type": "group_message", "data": msg_dict})
             except Exception:
                 pass
-            return jsonify({"message": msg_data})
+            return jsonify({"message": msg_dict})
         return jsonify({"error": "未知类型"}), 400
 
     def web_api_emoticons():
