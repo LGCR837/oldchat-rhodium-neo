@@ -110,6 +110,8 @@ function openImageViewer(src) {
 
 document.addEventListener('DOMContentLoaded', () => {
     const myUid = document.querySelector('meta[name="uid"]')?.content || '';
+    const myName = document.querySelector('meta[name="name"]')?.content || '';
+    const myAvatar = document.querySelector('meta[name="avatar"]')?.content || '';
 
     let currentConv = null;
     const seenMsgIds = {};
@@ -499,10 +501,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const bubbleWrapper = document.createElement('div');
         bubbleWrapper.className = 'message-content';
-        // 群聊或他人消息显示发送者名称，私聊自己的消息不显示
-        const showSender = (convKey && convKey.startsWith('group:')) || (!isSelf);
+        // 群聊且不是自己的消息才显示发送者名称（和OCK一致）
         bubbleWrapper.innerHTML = `
-            ${showSender ? `<div class="message-sender">${escapeHtml(sender)}</div>` : ''}
+            ${msg.group_id && !isSelf ? `<div class="message-sender">${escapeHtml(sender)}</div>` : ''}
             <div class="message-bubble">${content}</div>
             <div class="message-time">${time}</div>
         `;
@@ -944,6 +945,32 @@ document.addEventListener('DOMContentLoaded', () => {
             media_url: mediaUrl || null,
             thumb_url: thumbUrl || null
         };
+
+        // 立即显示发送中消息（半透明）
+        const tempId = 'temp_' + Date.now();
+        const tempMsg = {
+            id: tempId,
+            from_uid: myUid,
+            from_name: myName,
+            from_avatar: myAvatar || '',
+            body: msgType === 'text' ? body : '',
+            msg_type: msgType,
+            media_url: mediaUrl,
+            thumb_url: thumbUrl,
+            created_at: Math.floor(Date.now() / 1000),
+        };
+        if (currentConv.type === 'group') {
+            tempMsg.group_id = currentConv.id;
+        }
+        appendMessage(tempMsg, currentConv.key, seenMsgIds[currentConv.key]);
+        scrollToBottom(true);
+
+        // 找到临时消息元素，设置半透明
+        const tempEl = messagesContainer.querySelector(`[data-msg-id="${tempId}"]`);
+        if (tempEl) {
+            tempEl.style.opacity = '0.5';
+        }
+
         try {
             const res = await fetch('/api/send', {
                 method: 'POST',
@@ -953,17 +980,37 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (data.error) {
                 alert('发送失败: ' + data.error);
+                // 移除临时消息
+                if (tempEl) tempEl.remove();
+                seenMsgIds[currentConv.key]?.delete(tempId);
                 return;
             }
             if (pendingQuote) {
                 pendingQuote = null;
                 quotePreview.style.display = 'none';
             }
-            if (data.message) {
-                appendMessage(data.message, currentConv.key, seenMsgIds[currentConv.key]);
-                scrollToBottom(true);
+            // 后端直接返回消息对象，或包在 message 字段里
+            const msg = data.message || data;
+            if (msg && msg.id) {
+                // 替换临时消息
+                if (tempEl) {
+                    const newEl = createMessageElement(msg, currentConv.key, seenMsgIds[currentConv.key]);
+                    if (newEl) {
+                        tempEl.replaceWith(newEl);
+                    }
+                    seenMsgIds[currentConv.key]?.delete(tempId);
+                    seenMsgIds[currentConv.key]?.add(msg.id);
+                } else {
+                    appendMessage(msg, currentConv.key, seenMsgIds[currentConv.key]);
+                    scrollToBottom(true);
+                }
             }
-        } catch (e) { console.error(e); }
+        } catch (e) {
+            console.error(e);
+            // 发送失败，移除临时消息
+            if (tempEl) tempEl.remove();
+            seenMsgIds[currentConv.key]?.delete(tempId);
+        }
     }
 
     messageInput.addEventListener('keydown', function (e) {

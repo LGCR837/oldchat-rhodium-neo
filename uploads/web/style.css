@@ -251,19 +251,16 @@ body {
 	word-wrap: break-word;
 	margin-bottom: 4px;
     overflow-wrap: break-word;
-    align-items: flex-start;
 }
 
 .message.self {
 	align-self: flex-end;
-	flex-direction: column;
-	align-items: flex-end;
+	flex-direction: column
 }
 
 .message.other {
 	align-self: flex-start;
-	flex-direction: row;
-	align-items: flex-start;
+	flex-direction: row
 }
 
 .msg-avatar {
@@ -274,6 +271,7 @@ body {
 	height: 36px;
 	width: 36px;
 	margin-right: 10px;
+	margin-top: 15px;
 	object-fit: cover;
 	background: var(--border)
 }
