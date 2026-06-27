@@ -8,6 +8,26 @@ function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function formatTimeSeparator(ts) {
+    const now = new Date();
+    const d = new Date(ts * 1000);
+    const pad = n => (n < 10 ? '0' : '') + n;
+    const hhmm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    const isSameDay = d.getFullYear() === now.getFullYear() &&
+        d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    if (isSameDay) return hhmm;
+    const isSameYear = d.getFullYear() === now.getFullYear();
+    if (isSameYear) return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + hhmm;
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + hhmm;
+}
+
+function createTimeSeparator(ts) {
+    const div = document.createElement('div');
+    div.className = 'time-separator';
+    div.textContent = formatTimeSeparator(ts);
+    return div;
+}
+
 
 function openImageViewer(src) {
 	let overlay = document.getElementById('imageOverlay');
@@ -141,6 +161,123 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastRenderedMsg = null;
 
     let pendingQuote = null;
+    let lastRenderedTs = 0;
+
+    const defaultAvatar = 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
+
+    function openSpacePanel(uid) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;font-family:inherit;opacity:0;transition:opacity 0.2s;';
+        const btnBase = 'padding:6px 20px;border-radius:20px;border:none;font-size:14px;font-family:inherit;cursor:pointer;font-weight:500;';
+        overlay.innerHTML = `
+            <div style="background:#fa94a6;color:#fff;padding:13px 12px;display:flex;align-items:center;font-size:15px;font-weight:500;flex-shrink:0;position:relative;">
+                <button onclick="this.closest('div[style*=fixed]').remove()" style="position:absolute;left:12px;background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:8px;"><i class="fa-solid fa-chevron-left"></i></button>
+                <span style="width:100%;text-align:center;">用户空间</span>
+            </div>
+            <div id="sp-scroll" style="flex:1;overflow-y:auto;scrollbar-color:rgba(0,0,0,0.2) transparent;"></div>
+        `;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.style.opacity = '1');
+
+        const scroll = overlay.querySelector('#sp-scroll');
+        scroll.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+
+        function closePanel() { overlay.remove(); }
+
+        async function load() {
+            try {
+                const [profRes, momentsRes] = await Promise.all([
+                    fetch('/web/api/space/' + uid),
+                    fetch('/web/api/space/moments/' + uid)
+                ]);
+                const prof = await profRes.json();
+                const momentsData = await momentsRes.json();
+                if (prof.error) { scroll.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">' + prof.error + '</div>'; return; }
+                const u = prof.user;
+                const relation = prof.relation || 'none';
+                const avatar = u.avatar_url || defaultAvatar;
+
+                let btnHtml = '';
+                if (relation !== 'self') {
+                    if (relation === 'friend') {
+                        btnHtml = '<button style="' + btnBase + 'background:#fff;color:#fa94a6;border:1.5px solid #fa94a6;" onclick="spMsg()">私信</button>';
+                    } else if (relation === 'pending_sent') {
+                        btnHtml = '<button style="' + btnBase + 'background:#e0e0e0;color:#888;">已发送申请</button>';
+                    } else if (relation === 'pending_received') {
+                        btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spRespond(\'accept\')">接受好友</button>' +
+                                 '<button style="' + btnBase + 'background:#e0e0e0;color:#666;" onclick="spRespond(\'reject\')">拒绝</button>';
+                    } else {
+                        btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spAddFriend()">加好友</button>' +
+                                 '<button style="' + btnBase + 'background:#fff;color:#fa94a6;border:1.5px solid #fa94a6;" onclick="spMsg()">私信</button>';
+                    }
+                }
+
+                function fmtTs(ts) {
+                    if (!ts) return '';
+                    const d = new Date(ts * 1000);
+                    const pad = n => (n < 10 ? '0' : '') + n;
+                    return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+                }
+
+                let momentsHtml = '<div style="text-align:center;padding:40px;color:#999;">暂无动态</div>';
+                const mom = momentsData.moments || [];
+                if (mom.length > 0) {
+                    momentsHtml = '<div style="padding:0 16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;max-width:960px;margin:0 auto;">';
+                    mom.forEach(m => {
+                        let media = m.media_url ? '<div style="margin-top:8px;"><img src="' + m.media_url + '" style="width:100%;max-height:200px;object-fit:cover;border-radius:8px;cursor:pointer;" onerror="this.style.display=\'none\'"></div>' : '';
+                        momentsHtml += '<div style="background:#fff;border-radius:12px;padding:14px 16px;border:1px solid var(--border);">' +
+                            '<div style="font-size:11px;color:var(--secondary-text);margin-bottom:6px;">' + fmtTs(m.created_at) + '</div>' +
+                            '<div style="font-size:14px;color:var(--text);line-height:1.6;white-space:pre-wrap;word-break:break-word;">' + (m.body || '') + '</div>' +
+                            media +
+                            (m.likes > 0 ? '<div style="font-size:12px;color:var(--secondary-text);margin-top:8px;">❤ ' + m.likes + '</div>' : '') +
+                            '</div>';
+                    });
+                    momentsHtml += '</div>';
+                }
+                scroll.innerHTML =
+                    '<div style="background:#fff;padding:28px 20px 20px;display:flex;flex-direction:column;align-items:center;border-bottom:1px solid var(--border);">' +
+                        '<img src="' + avatar + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;margin-bottom:12px;background:var(--border);" onerror="this.src=\'' + defaultAvatar + '\'">' +
+                        '<div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:4px;">' + (u.display_name || u.username) + '</div>' +
+                        '<div style="font-size:12px;color:var(--secondary-text);margin-bottom:4px;">' + u.uid + '</div>' +
+                        (u.bio ? '<div style="font-size:13px;color:var(--secondary-text);margin-bottom:12px;text-align:center;max-width:300px;">' + u.bio + '</div>' : '') +
+                        '<div style="font-size:12px;color:var(--secondary-text);margin-bottom:10px;">注册于 ' + fmtTs(u.created_at) + '</div>' +
+                        (btnHtml ? '<div style="display:flex;gap:10px;">' + btnHtml + '</div>' : '') +
+                    '</div>' +
+                    '<div style="font-size:14px;font-weight:600;color:var(--text);padding:14px 16px 8px;">TA 的动态</div>' +
+                    momentsHtml;
+
+                window.spMsg = function() {
+                    closePanel();
+                    if (currentConv && currentConv.key === 'direct:' + u.uid) return;
+                    let found = contacts.friends.find(f => f.uid === u.uid);
+                    if (found) {
+                        switchConversation('direct', u.uid, found.name);
+                    } else {
+                        switchConversation('direct', u.uid, u.display_name || u.username);
+                    }
+                };
+                window.spAddFriend = async function() {
+                    try {
+                        const r = await fetch('/web/api/space/add_friend', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({to_uid: uid}) });
+                        const d = await r.json();
+                        if (d.error) { alert(d.error); return; }
+                        load();
+                    } catch(e) { alert('请求失败'); }
+                };
+                window.spRespond = async function(action) {
+                    try {
+                        const r = await fetch('/web/api/space/respond_friend', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uid: uid, action: action}) });
+                        const d = await r.json();
+                        if (d.error) { alert(d.error); return; }
+                        load();
+                    } catch(e) { alert('请求失败'); }
+                };
+            } catch(e) {
+                scroll.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载失败</div>';
+            }
+        }
+        load();
+    }
 
     let contextMenu = null;
     let contextMsgId = null;
@@ -165,7 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
 
     logoutBtn.addEventListener('click', () => {
-        window.location.href = '/logout';
+        window.location.href = '/web/logout';
     });
 
     aboutBtn.addEventListener('click', () => {
@@ -221,12 +358,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    const notifySound = new Audio('/uploads/web/notice.mp3');
+
     function handleWsMessage(msg) {
         if (!msg || !msg.type) return;
         if (msg.type === 'direct_message') {
             const d = msg.data || {};
             const fromUid = d.from_uid || '';
             if (fromUid.toUpperCase() === myUid.toUpperCase()) return;
+            notifySound.play().catch(() => {});
             const convKey = `direct:${fromUid}`;
             const msgObj = {
                 id: d.id,
@@ -249,6 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const groupId = d.group_id || '';
             const fromUid = d.from_uid || '';
             if (fromUid.toUpperCase() === myUid.toUpperCase()) return;
+            notifySound.play().catch(() => {});
             const convKey = `group:${groupId}`;
             const msgObj = {
                 id: d.id,
@@ -312,6 +453,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chatHeader.querySelector('.chat-title').textContent = name;
         messagesContainer.innerHTML = '';
         lastRenderedMsg = null;
+        lastRenderedTs = 0;
 
         // 重置滚动加载状态
         convOffsets[convKey] = 0;
@@ -389,9 +531,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     // 创建一个 fragment 批量插入
                     const frag = document.createDocumentFragment();
-                    olderMsgs.forEach(msg => {
+                    let prevTs = 0;
+                    olderMsgs.forEach((msg) => {
+                        const msgTs = msg.created_at || 0;
+                        if (prevTs && msgTs && (msgTs - prevTs) > 300) {
+                            frag.appendChild(createTimeSeparator(msgTs));
+                        }
                         const el = createMessageElement(msg, convKey, seenMsgIds[convKey]);
                         if (el) frag.appendChild(el);
+                        prevTs = msgTs;
                     });
                     messagesContainer.insertBefore(frag, messagesContainer.firstChild);
 
@@ -419,13 +567,24 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!msg || !msg.id) return null;
 
         const fromUid = msg.from_uid || msg.sender_uid || '';
+        const msgType = msg.msg_type || 'text';
+
+        if (msgType === 'system') {
+            const div = document.createElement('div');
+            div.className = 'time-separator';
+            div.textContent = msg.body || '';
+            div.dataset.msgId = msg.id;
+            div.dataset.fromUid = fromUid;
+            div.dataset.msgType = 'system';
+            return div;
+        }
+
         const isSelfByUid = fromUid && myUid && fromUid.toUpperCase() === myUid.toUpperCase();
         const isSelfByFlag = msg.is_me === true || msg.isSelf === true;
         const isSelf = isSelfByUid || isSelfByFlag;
 
         const sender = isSelf ? '' : (msg.from_name || msg.sender_name || msg.display_name || fromUid || '未知用户');
         const time = new Date(msg.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false });
-        const msgType = msg.msg_type || 'text';
         let content = '';
 
         if (msgType === 'image') {
@@ -593,7 +752,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.stopPropagation();
                 const uid = msg.from_uid;
                 if (uid) {
-                    window.open(`/space/${uid}`, '_blank');
+                    openSpacePanel(uid);
                 }
             });
             msgDiv.appendChild(avatarImg);
@@ -639,6 +798,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const fromUid = msg.from_uid || '';
         const isPlainText = (msg.msg_type || 'text') === 'text' && !(msg.body || '').trim().startsWith('{');
+        const msgTs = msg.created_at || 0;
+
+        // 检查时间间隔，超过5分钟插入时间分隔符
+        if (msgTs && lastRenderedTs && (msgTs - lastRenderedTs) > 300) {
+            const sep = createTimeSeparator(msgTs);
+            messagesContainer.appendChild(sep);
+        }
 
         // 尝试合并连续的同发送者纯文本消息
         if (mergeMessages && lastRenderedMsg && 
@@ -661,6 +827,7 @@ document.addEventListener('DOMContentLoaded', () => {
             container.appendChild(newTime);
             
             currentSeen.add(msg.id);
+            lastRenderedTs = msgTs;
             return;
         }
     
@@ -671,6 +838,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
         currentSeen.add(msg.id);
         lastRenderedMsg = { convKey, from_uid: fromUid, element: msgDiv };
+        lastRenderedTs = msgTs;
     }
 
     function scrollToBottom(force = false) {
@@ -1764,7 +1932,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // 没找到该用户的历史消息，跳转 space 页
-        window.open(`/space/${targetUid}`, '_blank');
+        openSpacePanel(targetUid);
     });
 
 });

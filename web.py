@@ -21,7 +21,7 @@ def init_web(app):
     #  HTML 模板
     # =========================================================================
 
-    # 登录页 HTML（保留 Kivotos 整体布局，去掉动态壁纸和多主题）
+    # 登录页 HTML（匹配聊天界面粉色风格，居中卡片，记住账号密码）
     _WEB_LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -39,215 +39,196 @@ def init_web(app):
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            margin: 0;
             font-family: 'zyyt', '微软雅黑', 'Microsoft YaHei', sans-serif;
-            overflow: hidden;
-            background: url('https://gwebcdn260523.pages.dev/v1/static/KivotosBg2.jpg') center/cover no-repeat fixed;
             min-height: 100vh;
-        }
-        .login-wrapper {
-            position: relative;
-            z-index: 10;
+            background: #f4f7f8;
             display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            min-height: 100vh;
-            padding: 20px 80px 20px 20px;
+            flex-direction: column;
         }
-        @media (max-width: 640px) {
-            .login-wrapper { justify-content: center; padding: 20px; }
-        }
-        .login-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 2rem 2rem 2.2rem 2rem;
-            border-radius: 20px;
-            box-shadow: 0 12px 28px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.04);
-            width: 100%;
-            max-width: 380px;
-            transition: all 0.2s;
-            text-align: left;
-        }
-        .login-card h1 {
-            margin-bottom: 0.35rem;
+        .login-header {
+            background: #fa94a6;
+            color: #fff;
+            padding: 13px 12px;
+            font-size: 15px;
             font-weight: 500;
-            font-size: 1.8rem;
-            color: #1f2a3e;
-            letter-spacing: -0.3px;
-        }
-        .greeting {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 0.95rem;
-            color: #5a6874;
-            margin-bottom: 1.8rem;
-            border-left: 3px solid #b0c4de;
-            padding-left: 12px;
-            font-weight: 400;
-        }
-        .greeting-text { flex: 1; }
-        .form-group { margin-bottom: 1.25rem; }
-        .login-card input {
-            width: 100%;
-            padding: 12px 16px;
-            border: 1px solid #cfdde6;
-            border-radius: 14px;
-            font-size: 0.95rem;
-            font-family: 'zyyt', inherit;
-            background-color: #fff;
-            transition: 0.2s;
-            outline: none;
-            color: #1e2a3e;
-        }
-        .login-card input:focus {
-            border-color: #0078d4;
-            box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.15);
-        }
-        .login-card input::placeholder {
-            color: #9aaebf;
-            font-weight: 400;
-            font-size: 0.9rem;
-        }
-        .login-card button {
-            width: 100%;
-            padding: 12px 16px;
-            background: #0078d4;
-            color: white;
-            border: none;
-            border-radius: 40px;
-            font-size: 1rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: background 0.2s, transform 0.05s;
-            margin-top: 6px;
-            letter-spacing: 0.3px;
-        }
-        .login-card button:hover { background: #106ebe; }
-        .login-card button:active { transform: scale(0.98); }
-        .login-card button:disabled { opacity: 0.7; cursor: not-allowed; }
-        .error {
-            background: #fff5f5;
-            color: #c23d3d;
-            padding: 10px 14px;
-            border-radius: 14px;
-            font-size: 0.85rem;
-            margin-bottom: 1.25rem;
-            border-left: 3px solid #c23d3d;
-            font-weight: 500;
-        }
-        .success {
-            background: #f0fff4;
-            color: #2d8a4e;
-            padding: 10px 14px;
-            border-radius: 14px;
-            font-size: 0.85rem;
-            margin-bottom: 1.25rem;
-            border-left: 3px solid #2d8a4e;
-            font-weight: 500;
-        }
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: 0.5rem 0 1rem 0;
-            justify-content: flex-start;
-            text-align: left;
-        }
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            margin: 0;
-            cursor: pointer;
-            accent-color: #0078d4;
+            text-align: center;
             flex-shrink: 0;
         }
-        .checkbox-group label {
-            font-size: 0.9rem;
-            color: #2c3e4e;
-            cursor: pointer;
-            user-select: none;
-            font-weight: 450;
+        .login-body {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
         }
-        .extra-note {
+        .login-card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+            width: 100%;
+            max-width: 380px;
+            overflow: hidden;
+        }
+        .login-card-top {
+            padding: 32px 24px 0;
             text-align: center;
-            margin-top: 1.5rem;
-            font-size: 0.7rem;
-            color: #94a3b8;
-            border-top: 1px solid #eaedf0;
-            padding-top: 1rem;
+        }
+        .login-card-top h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #fa94a6;
+        }
+        .login-card-body {
+            padding: 24px;
         }
         .tab-group {
             display: flex;
-            gap: 8px;
-            margin-bottom: 1.25rem;
+            gap: 0;
+            margin-bottom: 20px;
         }
         .tab {
             flex: 1;
             padding: 10px;
             text-align: center;
-            background: #eef2f7;
-            border-radius: 12px;
             cursor: pointer;
             font-size: 0.9rem;
-            color: #5a6874;
+            font-weight: 500;
+            color: #999;
             transition: all 0.2s;
+            border-bottom: 2px solid transparent;
         }
         .tab.active {
-            background: #0078d4;
-            color: white;
+            color: #fa94a6;
+            border-bottom: 2px solid #fa94a6;
         }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        @media (max-width: 480px) {
-          .login-card { padding: 1.6rem 1.5rem 1.9rem; }
-          .login-card h1 { font-size: 1.6rem; }
-          .checkbox-group label { font-size: 0.85rem; }
+        .form-group { margin-bottom: 14px; }
+        .form-group input {
+            width: 100%;
+            padding: 11px 14px;
+            border: 1px solid #e1e1e1;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            background: #f9f9f9;
+            outline: none;
+            color: #333;
+            transition: 0.2s;
+        }
+        .form-group input:focus {
+            border-color: #fa94a6;
+            box-shadow: 0 0 0 3px rgba(250,148,166,0.15);
+            background: #fff;
+        }
+        .form-group input::placeholder { color: #aaa; }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 16px 0;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #fff;
+            background: #fa94a6;
+            border: 1.5px solid #fa94a6;
+            border-radius: 3px;
+        }
+        .checkbox-group label {
+            font-size: 0.85rem;
+            color: #666;
+            cursor: pointer;
+            user-select: none;
+        }
+        .login-card button[type="submit"] {
+            width: 100%;
+            padding: 11px;
+            background: #fa94a6;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-family: inherit;
+        }
+        .login-card button[type="submit"]:hover { background: #e88294; }
+        .login-card button[type="submit"]:active { transform: scale(0.98); }
+        .login-card button[type="submit"]:disabled { opacity: 0.7; cursor: not-allowed; }
+        .msg-error {
+            background: #fff0f0;
+            color: #c23d3d;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        .msg-success {
+            background: #f0fff4;
+            color: #2d8a4e;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            margin-bottom: 14px;
+            text-align: center;
+        }
+        .extra-note {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.7rem;
+            color: #bbb;
         }
     </style>
 </head>
 <body>
-    <div class="login-wrapper">
+    <div class="login-header">OldChat for Kivotos</div>
+    <div class="login-body">
         <div class="login-card">
-            <h1>OldChat for Kivotos</h1>
-            <div class="greeting">
-                <span class="greeting-text">Sensei 欢迎回来，等你很久啦</span>
+            <div class="login-card-top">
+                <h1>欢迎回来</h1>
             </div>
-            <div id="message"></div>
-            <div class="tab-group">
-                <div class="tab active" data-tab="login">登录</div>
-                <div class="tab" data-tab="register">注册</div>
+            <div class="login-card-body">
+                <div id="message"></div>
+                <div class="tab-group">
+                    <div class="tab active" data-tab="login">登录</div>
+                    <div class="tab" data-tab="register">注册</div>
+                </div>
+                <div class="tab-content active" id="login-form">
+                    <form id="loginForm">
+                        <div class="form-group">
+                            <input type="text" name="identifier" id="identifier" placeholder="账号 / 邮箱 / UID" required autofocus>
+                        </div>
+                        <div class="form-group">
+                            <input type="password" name="password" id="password" placeholder="密码" required>
+                        </div>
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="rememberAccountCheckbox">
+                            <label for="rememberAccountCheckbox">记住账号</label>
+                        </div>
+                        <button type="submit">登录</button>
+                    </form>
+                </div>
+                <div class="tab-content" id="register-form">
+                    <form id="registerForm">
+                        <div class="form-group">
+                            <input type="text" name="username" id="reg-username" placeholder="用户名" required>
+                        </div>
+                        <div class="form-group">
+                            <input type="text" name="display_name" id="reg-display-name" placeholder="显示名称（可选）">
+                        </div>
+                        <div class="form-group">
+                            <input type="password" name="password" id="reg-password" placeholder="密码（至少6位）" required>
+                        </div>
+                        <button type="submit">注册</button>
+                    </form>
+                </div>
+                <div class="extra-note">OldChat for Kivotos</div>
             </div>
-            <div class="tab-content active" id="login-form">
-                <form id="loginForm">
-                    <div class="form-group">
-                        <input type="text" name="identifier" id="identifier" placeholder="账号 / 邮箱 / UID" required autofocus>
-                    </div>
-                    <div class="form-group">
-                        <input type="password" name="password" id="password" placeholder="密码" required>
-                    </div>
-                    <div class="checkbox-group">
-                        <input type="checkbox" id="rememberAccountCheckbox">
-                        <label for="rememberAccountCheckbox">记住账户</label>
-                    </div>
-                    <button type="submit">进入什亭之箱</button>
-                </form>
-            </div>
-            <div class="tab-content" id="register-form">
-                <form id="registerForm">
-                    <div class="form-group">
-                        <input type="text" name="username" id="reg-username" placeholder="用户名" required>
-                    </div>
-                    <div class="form-group">
-                        <input type="text" name="display_name" id="reg-display-name" placeholder="显示名称（可选）">
-                    </div>
-                    <div class="form-group">
-                        <input type="password" name="password" id="reg-password" placeholder="密码（至少6位）" required>
-                    </div>
-                    <button type="submit">注册账号</button>
-                </form>
-            </div>
-            <div class="extra-note">OldChat for Kivotos</div>
         </div>
     </div>
     <script>
@@ -261,13 +242,15 @@ def init_web(app):
         });
         var msgEl = document.getElementById('message');
         function showMsg(msg, type) {
-            msgEl.innerHTML = '<div class="' + type + '">' + msg + '</div>';
+            msgEl.innerHTML = '<div class="msg-' + type + '">' + msg + '</div>';
             setTimeout(function() { msgEl.innerHTML = ''; }, 3000);
         }
         (function autoFill() {
             try {
                 var savedId = localStorage.getItem('savedIdentifier');
+                var savedPwd = localStorage.getItem('savedPassword');
                 if (savedId) document.getElementById('identifier').value = savedId;
+                if (savedPwd) document.getElementById('password').value = savedPwd;
                 var cb = document.getElementById('rememberAccountCheckbox');
                 if (cb && savedId) cb.checked = true;
             } catch(e) {}
@@ -289,17 +272,24 @@ def init_web(app):
                 if (d.success) {
                     var cb = document.getElementById('rememberAccountCheckbox');
                     if (cb && cb.checked) {
-                        try { localStorage.setItem('savedIdentifier', id); } catch(e) {}
+                        try {
+                            localStorage.setItem('savedIdentifier', id);
+                            localStorage.setItem('savedPassword', pwd);
+                        } catch(e) {}
+                    } else {
+                        try {
+                            localStorage.removeItem('savedIdentifier');
+                            localStorage.removeItem('savedPassword');
+                        } catch(e) {}
                     }
-                    showMsg('登录成功！', 'success');
-                    setTimeout(function() { window.location.href = '/web/'; }, 500);
+                    window.location.href = '/web/';
                 } else {
                     showMsg(d.error || '登录失败', 'error');
                 }
             } catch(err) {
                 showMsg('网络错误', 'error');
             }
-            btn.disabled = false; btn.textContent = '进入什亭之箱';
+            btn.disabled = false; btn.textContent = '登录';
         });
         document.getElementById('registerForm').addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -326,7 +316,7 @@ def init_web(app):
             } catch(err) {
                 showMsg('网络错误', 'error');
             }
-            btn.disabled = false; btn.textContent = '注册账号';
+            btn.disabled = false; btn.textContent = '注册';
         });
     </script>
 </body>
@@ -963,6 +953,438 @@ def init_web(app):
         return jsonify({"items": [], "has_more": False})
 
     # =========================================================================
+    #  用户空间页
+    # =========================================================================
+
+    _WEB_SPACE_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>用户主页 - OldChat for Kivotos</title>
+    <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
+    <link rel="stylesheet" href="/web/static/style.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--bg); font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        .space-header {
+            background: #fa94a6;
+            color: #fff;
+            padding: 13px 12px;
+            display: flex;
+            align-items: center;
+            font-size: 15px;
+            font-weight: 500;
+            flex-shrink: 0;
+            position: relative;
+        }
+        .space-header .back-btn {
+            position: absolute;
+            left: 12px;
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 8px;
+        }
+        .space-header .header-title { width: 100%; text-align: center; }
+
+        .space-scroll {
+            flex: 1;
+            overflow-y: auto;
+            scrollbar-color: rgba(0,0,0,0.2) transparent;
+        }
+        .space-scroll::-webkit-scrollbar { width: 6px; }
+        .space-scroll::-webkit-scrollbar-track { background: transparent; }
+        .space-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 3px; }
+
+        .space-profile {
+            background: #fff;
+            padding: 28px 20px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .space-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-bottom: 12px;
+            background: var(--border);
+        }
+        .space-name {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        .space-uid {
+            font-size: 12px;
+            color: var(--secondary-text);
+            margin-bottom: 4px;
+        }
+        .space-bio {
+            font-size: 13px;
+            color: var(--secondary-text);
+            margin-bottom: 12px;
+            text-align: center;
+            max-width: 300px;
+        }
+        .space-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .space-actions button {
+            padding: 8px 22px;
+            border-radius: 20px;
+            border: none;
+            font-size: 14px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        .space-actions .btn-friend {
+            background: #fa94a6;
+            color: #fff;
+        }
+        .space-actions .btn-friend:hover { background: #e88294; }
+        .space-actions .btn-friend.friendship {
+            background: #e0e0e0;
+            color: #888;
+        }
+        .space-actions .btn-msg {
+            background: #fff;
+            color: #fa94a6;
+            border: 1.5px solid #fa94a6;
+        }
+        .space-actions .btn-msg:hover { background: #fff0f3; }
+        .space-actions .btn-back {
+            background: #e0e0e0;
+            color: #666;
+        }
+        .space-actions .btn-back:hover { background: #d0d0d0; }
+
+        .space-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+            padding: 14px 16px 8px;
+        }
+        .space-moments {
+            padding: 0 16px 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 10px;
+            max-width: 960px;
+            margin: 0 auto;
+        }
+        .moment-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+        }
+        .moment-card .moment-time {
+            font-size: 11px;
+            color: var(--secondary-text);
+            margin-bottom: 6px;
+        }
+        .moment-card .moment-body {
+            font-size: 14px;
+            color: var(--text);
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .moment-card .moment-media {
+            margin-top: 8px;
+        }
+        .moment-card .moment-media img {
+            width: 100%;
+            max-height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .moment-card .moment-likes {
+            font-size: 12px;
+            color: var(--secondary-text);
+            margin-top: 8px;
+        }
+        .space-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--secondary-text);
+            font-size: 14px;
+            grid-column: 1 / -1;
+        }
+        .space-join-time {
+            font-size: 12px;
+            color: var(--secondary-text);
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="space-header">
+        <button class="back-btn" onclick="history.back()"><i class="fa-solid fa-chevron-left"></i></button>
+        <span class="header-title">用户空间</span>
+    </div>
+    <div class="space-scroll">
+        <div id="profileArea"></div>
+        <div class="space-section-title">TA 的动态</div>
+        <div class="space-moments" id="momentsArea"></div>
+    </div>
+
+    <script>
+        (function() {
+            const parts = location.pathname.split('/');
+            const uid = parts[parts.length - 1];
+            if (!uid) { document.getElementById('profileArea').innerHTML = '<div class="space-empty">用户不存在</div>'; return; }
+
+            const defaultAvatar = 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
+
+            function formatTs(ts) {
+                if (!ts) return '';
+                const d = new Date(ts * 1000);
+                const pad = n => (n < 10 ? '0' : '') + n;
+                return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+            }
+
+            async function loadProfile() {
+                try {
+                    const res = await fetch('/web/api/space/' + uid);
+                    const data = await res.json();
+                    if (data.error) {
+                        document.getElementById('profileArea').innerHTML = '<div class="space-empty">' + data.error + '</div>';
+                        return;
+                    }
+                    const u = data.user;
+                    const relation = data.relation || 'none';
+                    const avatar = u.avatar_url || defaultAvatar;
+                    let btnHtml = '';
+                    if (relation === 'self') {
+                        btnHtml = '';
+                    } else if (relation === 'friend') {
+                        btnHtml = '<button class="btn-msg" onclick="location.href=\'/web/\'">私信</button>';
+                    } else if (relation === 'pending_sent') {
+                        btnHtml = '<button class="btn-friend friendship">已发送申请</button>';
+                    } else if (relation === 'pending_received') {
+                        btnHtml = '<button class="btn-friend" onclick="respondFriend(\'accept\')">接受好友</button><button class="btn-back" onclick="respondFriend(\'reject\')">拒绝</button>';
+                    } else {
+                        btnHtml = '<button class="btn-friend" onclick="addFriend()">加好友</button><button class="btn-msg" onclick="location.href=\'/web/\'">私信</button>';
+                    }
+                    document.getElementById('profileArea').innerHTML =
+                        '<div class="space-profile">' +
+                            '<img class="space-avatar" src="' + avatar + '" onerror="this.src=\'' + defaultAvatar + '\'">' +
+                            '<div class="space-name">' + (u.display_name || u.username) + '</div>' +
+                            '<div class="space-uid">' + u.uid + '</div>' +
+                            (u.bio ? '<div class="space-bio">' + u.bio + '</div>' : '') +
+                            '<div class="space-join-time">注册于 ' + formatTs(u.created_at) + '</div>' +
+                            '<div class="space-actions">' + btnHtml + '</div>' +
+                        '</div>';
+                } catch(e) {
+                    document.getElementById('profileArea').innerHTML = '<div class="space-empty">加载失败</div>';
+                }
+            }
+
+            async function loadMoments() {
+                try {
+                    const res = await fetch('/web/api/space/moments/' + uid);
+                    const data = await res.json();
+                    const moments = data.moments || [];
+                    if (moments.length === 0) {
+                        document.getElementById('momentsArea').innerHTML = '<div class="space-empty">暂无动态</div>';
+                        return;
+                    }
+                    let html = '';
+                    moments.forEach(m => {
+                        let mediaHtml = '';
+                        if (m.media_url) {
+                            mediaHtml = '<div class="moment-media"><img src="' + m.media_url + '" onerror="this.style.display=\'none\'"></div>';
+                        }
+                        html += '<div class="moment-card">' +
+                            '<div class="moment-time">' + formatTs(m.created_at) + '</div>' +
+                            '<div class="moment-body">' + (m.body || '') + '</div>' +
+                            mediaHtml +
+                            (m.likes > 0 ? '<div class="moment-likes">❤ ' + m.likes + '</div>' : '') +
+                            '</div>';
+                    });
+                    document.getElementById('momentsArea').innerHTML = html;
+                } catch(e) {
+                    document.getElementById('momentsArea').innerHTML = '<div class="space-empty">加载动态失败</div>';
+                }
+            }
+
+            window.addFriend = async function() {
+                try {
+                    const res = await fetch('/web/api/space/add_friend', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ to_uid: uid })
+                    });
+                    const data = await res.json();
+                    if (data.error) { alert(data.error); return; }
+                    loadProfile();
+                } catch(e) { alert('请求失败'); }
+            };
+
+            window.respondFriend = async function(action) {
+                try {
+                    const res = await fetch('/web/api/space/respond_friend', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ uid: uid, action: action })
+                    });
+                    const data = await res.json();
+                    if (data.error) { alert(data.error); return; }
+                    loadProfile();
+                } catch(e) { alert('请求失败'); }
+            };
+
+            loadProfile();
+            loadMoments();
+        })();
+    </script>
+</body>
+</html>
+"""
+
+    def web_space(uid):
+        return _WEB_SPACE_HTML
+
+    def web_api_space(uid):
+        from flask import jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        target = app_module.db_query_one(
+            "SELECT id, uid, username, display_name, avatar_url, cover_url, bio, online, last_seen, created_at FROM users WHERE uid = ?",
+            (uid.upper(),),
+        )
+        if not target:
+            return jsonify({"error": "用户不存在"}), 404
+        my_id = user["id"]
+        target_id = target["id"]
+        if target_id == my_id:
+            relation = "self"
+        else:
+            row = app_module.db_query_one(
+                "SELECT status, initiated_by FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)",
+                (my_id, target_id, target_id, my_id),
+            )
+            if not row:
+                relation = "none"
+            elif row["status"] == "accepted":
+                relation = "friend"
+            elif row["initiated_by"] == my_id:
+                relation = "pending_sent"
+            else:
+                relation = "pending_received"
+        return jsonify({
+            "user": {
+                "uid": target["uid"],
+                "username": target["username"],
+                "display_name": target["display_name"],
+                "avatar_url": target["avatar_url"],
+                "cover_url": target["cover_url"],
+                "bio": target["bio"],
+                "online": bool(target["online"]),
+                "last_seen": target["last_seen"],
+                "created_at": target["created_at"],
+            },
+            "relation": relation,
+        })
+
+    def web_api_space_moments(uid):
+        from flask import jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        target = app_module.db_query_one("SELECT id FROM users WHERE uid = ?", (uid.upper(),))
+        if not target:
+            return jsonify({"moments": []})
+        rows = app_module.db_query_all(
+            "SELECT moment_id, body, media_url, thumb_url, created_at, likes FROM moments WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
+            (target["id"],),
+        )
+        return jsonify({"moments": [
+            {"id": m["moment_id"], "body": m["body"], "media_url": m["media_url"], "created_at": m["created_at"], "likes": m["likes"]}
+            for m in rows
+        ]})
+
+    def web_api_space_add_friend():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        to_uid = (data.get("to_uid") or "").strip().upper()
+        if not to_uid:
+            return jsonify({"error": "参数错误"}), 400
+        target = app_module.db_query_one("SELECT id, uid FROM users WHERE uid = ?", (to_uid,))
+        if not target:
+            return jsonify({"error": "用户不存在"}), 404
+        if target["id"] == user["id"]:
+            return jsonify({"error": "不能添加自己"}), 400
+        existing = app_module.db_query_one(
+            "SELECT id, status FROM friendships WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)",
+            (user["id"], target["id"], target["id"], user["id"]),
+        )
+        if existing:
+            if existing["status"] == "accepted":
+                return jsonify({"message": "已经是好友"})
+            return jsonify({"message": "已发送过申请"})
+        now = app_module.now_ts()
+        app_module.db_execute(
+            "INSERT INTO friendships (user_id, friend_id, status, initiated_by, created_at) VALUES (?, ?, 'pending', ?, ?)",
+            (user["id"], target["id"], user["id"], now),
+        )
+        try:
+            app_module.push_to_user(target["id"], {
+                "type": "friend_request",
+                "data": {"from_uid": user["uid"], "from_name": user["display_name"] or user["username"]},
+            })
+        except Exception:
+            pass
+        return jsonify({"message": "已发送好友申请"})
+
+    def web_api_space_respond_friend():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        target_uid = (data.get("uid") or "").strip().upper()
+        action = data.get("action") or "accept"
+        if not target_uid:
+            return jsonify({"error": "参数错误"}), 400
+        target = app_module.db_query_one("SELECT id FROM users WHERE uid = ?", (target_uid,))
+        if not target:
+            return jsonify({"error": "用户不存在"}), 404
+        row = app_module.db_query_one(
+            "SELECT id FROM friendships WHERE user_id = ? AND friend_id = ? AND status = 'pending'",
+            (target["id"], user["id"]),
+        )
+        if not row:
+            return jsonify({"error": "无待处理的好友申请"}), 404
+        if action == "accept":
+            app_module.db_execute("UPDATE friendships SET status = 'accepted' WHERE id = ?", (row["id"],))
+        else:
+            app_module.db_execute("DELETE FROM friendships WHERE id = ?", (row["id"],))
+        return jsonify({"message": "已处理"})
+
+    # =========================================================================
     #  注册路由
     # =========================================================================
 
@@ -983,3 +1405,8 @@ def init_web(app):
     app.add_url_rule("/web/api/upload_and_send", "web_api_upload_and_send", web_api_upload_and_send, methods=["POST"])
     app.add_url_rule("/web/api/emoticons", "web_api_emoticons", web_api_emoticons)
     app.add_url_rule("/web/api/emoji/plaza", "web_api_emoji_plaza", web_api_emoji_plaza)
+    app.add_url_rule("/web/space/<uid>", "web_space", web_space)
+    app.add_url_rule("/web/api/space/<uid>", "web_api_space", web_api_space)
+    app.add_url_rule("/web/api/space/moments/<uid>", "web_api_space_moments", web_api_space_moments)
+    app.add_url_rule("/web/api/space/add_friend", "web_api_space_add_friend", web_api_space_add_friend, methods=["POST"])
+    app.add_url_rule("/web/api/space/respond_friend", "web_api_space_respond_friend", web_api_space_respond_friend, methods=["POST"])

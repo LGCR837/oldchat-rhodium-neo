@@ -1,3 +1,6 @@
 /media/
 __pycache__/
+/.mimocode/
+/.atomcode/
+/.vscode/
 oldchat.db
