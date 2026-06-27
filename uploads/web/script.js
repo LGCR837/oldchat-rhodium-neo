@@ -1657,51 +1657,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // 连接 WebSocket
     initWebSocket();
 
-    // 主题切换菜单（仅当页面存在相关元素时启用）
-    const themeMenuBtn = document.getElementById('themeMenuBtn');
-    const themeMenu = document.getElementById('themeMenu');
-    const themeMenuList = document.getElementById('themeMenuList');
-
-    if (themeMenuBtn && themeMenu && themeMenuList) {
-        themeMenuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (themeMenu.style.display === 'block') {
-                themeMenu.style.display = 'none';
-                return;
-            }
-            fetch('/api/themes')
-                .then(r => r.json())
-                .then(data => {
-                    const current = data.current;
-                    themeMenuList.innerHTML = data.themes.map(t => `
-                        <div class="theme-item ${t.id === current ? 'active' : ''}" data-theme-id="${t.id}">
-                            <span>${escapeHtml(t.name)}</span>
-                            ${t.id === current ? '<span class="theme-check">✓</span>' : ''}
-                        </div>
-                    `).join('');
-                    themeMenuList.querySelectorAll('.theme-item').forEach(item => {
-                        item.addEventListener('click', (ev) => {
-                            const themeId = item.dataset.themeId;
-                            fetch('/api/set_theme', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({theme_id: themeId})
-                            }).then(r => r.json()).then(res => {
-                                if (res.status === 'ok') location.reload();
-                            });
-                        });
-                    });
-                    themeMenu.style.display = 'block';
-                });
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!themeMenu.contains(e.target) && e.target !== themeMenuBtn) {
-                themeMenu.style.display = 'none';
-            }
-        });
-    }
-
     // ===== @ 提及点击跳转 =====
     // 注入跳转目标闪烁动画
     const styleEl = document.createElement('style');

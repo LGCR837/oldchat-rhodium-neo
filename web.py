@@ -541,22 +541,13 @@ def init_web(app):
             return jsonify({"error": "未登录"}), 401
         import secrets
         access_token = secrets.token_hex(32)
-        refresh_token = secrets.token_hex(32)
         expires_at = app_module.now_ts() + 7 * 24 * 3600
-        exist = app_module.db_query_one(
-            "SELECT access_token FROM tokens WHERE user_id = ? LIMIT 1",
-            (user["id"],),
+        # 先删旧 token，再插入新的，避免 UNIQUE 约束冲突
+        app_module.db_execute("DELETE FROM tokens WHERE user_id = ?", (user["id"],))
+        app_module.db_execute(
+            "INSERT INTO tokens (access_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (access_token, user["id"], app_module.now_ts(), expires_at),
         )
-        if exist:
-            app_module.db_execute(
-                "UPDATE tokens SET access_token = ?, refresh_token = ?, expires_at = ? WHERE user_id = ?",
-                (access_token, refresh_token, expires_at, user["id"]),
-            )
-        else:
-            app_module.db_execute(
-                "INSERT INTO tokens (access_token, refresh_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-                (access_token, refresh_token, user["id"], app_module.now_ts(), expires_at),
-            )
         return jsonify({"token": access_token})
 
     def web_api_contacts():
