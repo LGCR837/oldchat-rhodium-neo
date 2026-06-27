@@ -238,7 +238,7 @@ body {
 	padding: 20px;
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 4px;
 	scrollbar-color: rgba(0,0,0,0.2) transparent;
     min-width: 0
 }
@@ -276,6 +276,7 @@ body {
 	word-wrap: break-word;
 	margin-bottom: 4px;
     overflow-wrap: break-word;
+	position: relative;
 }
 
 .message.self {
@@ -364,6 +365,77 @@ body {
 	width: 36px;
 	object-fit: cover;
 	background: var(--border)
+}
+
+/* 连消息样式 */
+.message.consecutive {
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+.message.consecutive-first {
+	margin-bottom: 0;
+}
+
+.message.consecutive .msg-avatar,
+.message.consecutive .message-sender {
+	display: none;
+}
+
+.message.other.consecutive {
+	padding-left: 36px;
+}
+
+.message.other.consecutive .message-bubble::before {
+	display: none;
+}
+
+.message.self.consecutive {
+	padding-right: 0;
+}
+
+.message.self.consecutive .message-bubble::before {
+	display: none;
+}
+
+.message.consecutive .message-time {
+	position: absolute;
+	right: -46px;
+	bottom: 2px;
+	font-size: 10px;
+	opacity: 0;
+	transition: opacity 0.2s ease;
+	pointer-events: none;
+	white-space: nowrap;
+	z-index: 1;
+}
+
+.message.self.consecutive .message-time {
+	right: auto;
+	left: -46px;
+}
+
+.message.consecutive-first .message-time {
+	position: absolute;
+	right: -46px;
+	bottom: 2px;
+	font-size: 10px;
+	opacity: 0;
+	transition: opacity 0.2s ease;
+	pointer-events: none;
+	white-space: nowrap;
+	z-index: 1;
+	margin-bottom: 0;
+}
+
+.message.self.consecutive-first .message-time {
+	right: auto;
+	left: -46px;
+}
+
+.message.consecutive-first:hover .message-time,
+.message.consecutive:hover .message-time {
+	opacity: 1;
 }
 
 .message-bubble {

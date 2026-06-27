@@ -862,14 +862,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const isPlainText = (msg.msg_type || 'text') === 'text' && !(msg.body || '').trim().startsWith('{');
         const msgTs = msg.created_at || 0;
 
+        // 检查是否为连续消息（同发送者、5分钟内、同会话）
+        const isConsecutive = lastRenderedMsg &&
+            lastRenderedMsg.convKey === convKey &&
+            lastRenderedMsg.from_uid === fromUid &&
+            msgTs && lastRenderedTs && (msgTs - lastRenderedTs) <= 300;
+
         // 检查时间间隔，超过5分钟插入时间分隔符
         if (msgTs && lastRenderedTs && (msgTs - lastRenderedTs) > 300) {
             const sep = createTimeSeparator(msgTs);
             messagesContainer.appendChild(sep);
         }
 
-        // 尝试合并连续的同发送者纯文本消息
-        if (mergeMessages && lastRenderedMsg && 
+        // 尝试合并连续的同发送者纯文本消息（保留旧逻辑但禁用）
+        if (false && mergeMessages && lastRenderedMsg && 
             lastRenderedMsg.convKey === convKey && 
             lastRenderedMsg.from_uid === fromUid &&
             isPlainText &&
@@ -895,6 +901,20 @@ document.addEventListener('DOMContentLoaded', () => {
     
         const msgDiv = createMessageElement(msg, convKey, currentSeen);
         if (!msgDiv) return;
+
+        // 添加连续消息标记
+        if (isConsecutive) {
+            msgDiv.classList.add('consecutive');
+            // 标记上一条消息为连续组的首条
+            if (lastRenderedMsg && lastRenderedMsg.element) {
+                lastRenderedMsg.element.classList.add('consecutive-first');
+            }
+        } else {
+            // 非连续消息，移除首条标记
+            if (lastRenderedMsg && lastRenderedMsg.element) {
+                lastRenderedMsg.element.classList.remove('consecutive-first');
+            }
+        }
     
         messagesContainer.appendChild(msgDiv);
     
