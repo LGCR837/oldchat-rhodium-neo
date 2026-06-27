@@ -481,11 +481,11 @@ document.addEventListener('DOMContentLoaded', () => {
         msgDiv.dataset.msgType = msg.msg_type || 'text';
 
         if (!isSelf) {
-            const avatarUrl = msg.from_avatar || '/static/default-avatar.png';
+            const avatarUrl = msg.from_avatar || 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
             const avatarImg = document.createElement('img');
             avatarImg.src = avatarUrl;
             avatarImg.className = 'msg-avatar';
-            avatarImg.onerror = () => { avatarImg.src = '/static/default-avatar.png'; };
+            avatarImg.onerror = () => { avatarImg.src = 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png'; };
             avatarImg.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const uid = msg.from_uid;
@@ -1392,7 +1392,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const grid = picker.querySelector('.emoticon-grid');
     
             images.forEach(img => {
-                const imgUrl = `/static/images/${img}`;
+                const imgUrl = `https://gwebcdn260523.pages.dev/v1/static/images/${img}`;
                 const item = document.createElement('div');
                 item.className = 'emoticon-item';
                 item.innerHTML = `<img src="${imgUrl}" loading="lazy">`;
