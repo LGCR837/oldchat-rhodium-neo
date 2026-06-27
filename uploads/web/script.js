@@ -165,6 +165,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const defaultAvatar = 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
 
+    // 未读消息计数
+    const unreadCounts = {};
+
+    function updateUnreadBadge(convKey, count) {
+        const item = contactList.querySelector(`[data-conv-key="${convKey}"]`);
+        if (!item) return;
+        const badge = item.querySelector('.unread-badge');
+        if (!badge) return;
+        if (count > 0) {
+            badge.textContent = count > 99 ? '99+' : count;
+            badge.style.display = 'inline-flex';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
     function openSpacePanel(uid) {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;font-family:inherit;opacity:0;transition:opacity 0.2s;';
@@ -318,6 +334,28 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.error) { alert(data.error); return; }
             contacts = data;
             renderContacts();
+            // 加载未读计数
+            loadUnreadCounts();
+        } catch (e) { console.error(e); }
+    }
+
+    async function loadUnreadCounts() {
+        try {
+            const res = await fetch('/web/api/unread_counts');
+            const data = await res.json();
+            if (data.error) return;
+            // 更新群聊未读
+            for (const [groupId, count] of Object.entries(data.groups || {})) {
+                const convKey = `group:${groupId}`;
+                unreadCounts[convKey] = count;
+                updateUnreadBadge(convKey, count);
+            }
+            // 更新私聊未读
+            for (const [uid, count] of Object.entries(data.directs || {})) {
+                const convKey = `direct:${uid}`;
+                unreadCounts[convKey] = count;
+                updateUnreadBadge(convKey, count);
+            }
         } catch (e) { console.error(e); }
     }
 
@@ -368,8 +406,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const d = msg.data || {};
             const fromUid = d.from_uid || '';
             if (fromUid.toUpperCase() === myUid.toUpperCase()) return;
-            notifySound.play().catch(() => {});
             const convKey = `direct:${fromUid}`;
+            // 只在当前会话匹配时才显示消息
+            if (!currentConv || currentConv.key !== convKey) {
+                // 非当前会话，增加未读计数
+                unreadCounts[convKey] = (unreadCounts[convKey] || 0) + 1;
+                updateUnreadBadge(convKey, unreadCounts[convKey]);
+                return;
+            }
+            notifySound.play().catch(() => {});
             const msgObj = {
                 id: d.id,
                 from_uid: fromUid,
@@ -382,17 +427,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 created_at: d.created_at,
             };
             appendMessage(msgObj, convKey, seenMsgIds[convKey]);
-            if (currentConv && currentConv.key === convKey) {
-                scrollToBottom(true);
-                fetch(`/web/api/mark_read/direct/${fromUid}`, { method: 'PUT' });
-            }
+            scrollToBottom(true);
+            fetch(`/web/api/mark_read/direct/${fromUid}`, { method: 'PUT' });
         } else if (msg.type === 'group_message') {
             const d = msg.data || {};
             const groupId = d.group_id || '';
             const fromUid = d.from_uid || '';
             if (fromUid.toUpperCase() === myUid.toUpperCase()) return;
-            notifySound.play().catch(() => {});
             const convKey = `group:${groupId}`;
+            // 只在当前会话匹配时才显示消息
+            if (!currentConv || currentConv.key !== convKey) {
+                // 非当前会话，增加未读计数
+                unreadCounts[convKey] = (unreadCounts[convKey] || 0) + 1;
+                updateUnreadBadge(convKey, unreadCounts[convKey]);
+                return;
+            }
+            notifySound.play().catch(() => {});
             const msgObj = {
                 id: d.id,
                 from_uid: fromUid,
@@ -406,10 +456,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 group_id: groupId,
             };
             appendMessage(msgObj, convKey, seenMsgIds[convKey]);
-            if (currentConv && currentConv.key === convKey) {
-                scrollToBottom(true);
-                fetch(`/web/api/mark_read/group/${groupId}`, { method: 'PUT' });
-            }
+            scrollToBottom(true);
+            fetch(`/web/api/mark_read/group/${groupId}`, { method: 'PUT' });
         }
     }
 
@@ -441,7 +489,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const div = document.createElement('div');
         div.className = 'contact-item';
         div.dataset.convKey = type + ':' + id;
-        div.innerHTML = `<div class="name">${escapeHtml(name)}</div><div class="uid">${escapeHtml(id)}</div>`;
+        div.innerHTML = `<div class="name">${escapeHtml(name)}</div><div class="uid">${escapeHtml(id)}</div><span class="unread-badge" style="display:none;"></span>`;
         div.addEventListener('click', (e) => switchConversation(type, id, name, e));
         return div;
     }
@@ -452,12 +500,18 @@ document.addEventListener('DOMContentLoaded', () => {
             event.currentTarget.classList.add('active');
         }
 
+        // 清除未读计数
+        const convKey = `${type}:${id}`;
+        if (unreadCounts[convKey]) {
+            delete unreadCounts[convKey];
+            updateUnreadBadge(convKey, 0);
+        }
+
         if (isMobile()) {
             sidebar.classList.add('collapsed');
             expandChat();
         }
     
-        const convKey = `${type}:${id}`;
         currentConv = { type, id, name, key: convKey };
     
         // 保存到 localStorage，下次自动恢复

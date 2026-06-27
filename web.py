@@ -1383,6 +1383,36 @@ def init_web(app):
             app_module.db_execute("DELETE FROM friendships WHERE id = ?", (row["id"],))
         return jsonify({"message": "已处理"})
 
+    def web_api_unread_counts():
+        from flask import jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        my_id = user["id"]
+        # 群聊未读计数
+        group_rows = app_module.db_query_all(
+            """SELECT gm.group_id, COUNT(*) as cnt
+               FROM group_messages gm
+               JOIN group_members gmm ON gmm.group_id = gm.group_id
+               WHERE gmm.user_id = ? AND gm.from_id != ?
+                 AND gm.id > COALESCE(gmm.last_read_msg_id, 0)
+               GROUP BY gm.group_id""",
+            (my_id, my_id),
+        )
+        groups = {r["group_id"]: r["cnt"] for r in group_rows}
+        # 私聊未读计数（通过 is_read 字段）
+        dm_rows = app_module.db_query_all(
+            """SELECT u.uid, COUNT(*) as cnt
+               FROM direct_messages dm
+               JOIN users u ON u.id = dm.from_id
+               WHERE dm.to_id = ? AND dm.from_id != ? AND dm.is_read = 0
+               GROUP BY dm.from_id""",
+            (my_id, my_id),
+        )
+        directs = {r["uid"]: r["cnt"] for r in dm_rows}
+        return jsonify({"groups": groups, "directs": directs})
+
     # =========================================================================
     #  注册路由
     # =========================================================================
@@ -1409,3 +1439,4 @@ def init_web(app):
     app.add_url_rule("/web/api/space/moments/<uid>", "web_api_space_moments", web_api_space_moments)
     app.add_url_rule("/web/api/space/add_friend", "web_api_space_add_friend", web_api_space_add_friend, methods=["POST"])
     app.add_url_rule("/web/api/space/respond_friend", "web_api_space_respond_friend", web_api_space_respond_friend, methods=["POST"])
+    app.add_url_rule("/web/api/unread_counts", "web_api_unread_counts", web_api_unread_counts)
