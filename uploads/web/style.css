@@ -255,12 +255,41 @@ body {
 
 .message.self {
 	align-self: flex-end;
-	flex-direction: column
+	flex-direction: column;
+	align-items: flex-end;
 }
 
 .message.other {
 	align-self: flex-start;
-	flex-direction: row
+	display: grid;
+	grid-template-columns: auto 1fr;
+	grid-template-rows: auto auto auto;
+	column-gap: 10px;
+	row-gap: 0;
+	align-items: start;
+}
+
+.message.other .msg-avatar {
+	grid-row: 2;
+	grid-column: 1;
+	margin: 0;
+	align-self: start;
+}
+
+.message.other .message-sender {
+	grid-row: 1;
+	grid-column: 2;
+	margin: 0 0 3px 0;
+}
+
+.message.other .message-bubble {
+	grid-row: 2;
+	grid-column: 2;
+}
+
+.message.other .message-time {
+	grid-row: 3;
+	grid-column: 2;
 }
 
 .msg-avatar {
@@ -270,17 +299,8 @@ body {
 	flex-shrink: 0;
 	height: 36px;
 	width: 36px;
-	margin-right: 10px;
-	margin-top: 15px;
 	object-fit: cover;
 	background: var(--border)
-}
-
-.message-content {
-	display: flex;
-	flex-direction: column;
-	max-width: 100%;
-    word-break: break-word;
 }
 
 .message-bubble {

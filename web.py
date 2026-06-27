@@ -533,6 +533,33 @@ def init_web(app):
             return None
         return app_module.db_query_one("SELECT * FROM users WHERE uid = ?", (uid,))
 
+    def web_api_ws_token():
+        from flask import jsonify, session
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        # 生成一个临时的 access_token 用于 WebSocket 连接
+        import secrets
+        access_token = secrets.token_hex(32)
+        expires_at = app_module.now_ts() + 7 * 24 * 3600
+        # 检查是否已有 token
+        exist = app_module.db_query_one(
+            "SELECT id FROM tokens WHERE user_id = ? AND device = 'web'",
+            (user["id"],),
+        )
+        if exist:
+            app_module.db_execute(
+                "UPDATE tokens SET access_token = ?, expires_at = ? WHERE id = ?",
+                (access_token, expires_at, exist["id"]),
+            )
+        else:
+            app_module.db_execute(
+                "INSERT INTO tokens (user_id, device, access_token, refresh_token, expires_at, created_at) VALUES (?, 'web', ?, ?, ?, ?)",
+                (user["id"], access_token, secrets.token_hex(32), expires_at, app_module.now_ts()),
+            )
+        return jsonify({"token": access_token})
+
     def web_api_contacts():
         from flask import jsonify
         import app as app_module
@@ -715,9 +742,13 @@ def init_web(app):
         if not user:
             return jsonify({"error": "未登录"}), 401
         data = request.get_json(silent=True) or {}
-        msg_type = data.get("type", "direct")
+        conv_type = data.get("type", "direct")
         target_id = data.get("target_id", "")
         body = data.get("body", "")
+        msg_type = data.get("msg_type", "text")
+        media_url = data.get("media_url") or None
+        thumb_url = data.get("thumb_url") or None
+        burn_after_seconds = int(data.get("burn_after_seconds") or 0)
         if not target_id or not body:
             return jsonify({"error": "参数错误"}), 400
         my_id = user["id"]
@@ -725,13 +756,13 @@ def init_web(app):
         my_name = user["display_name"] or user["username"]
         my_avatar = user["avatar_url"] or ""
         now = app_module.now_ts()
-        if msg_type == "direct":
+        if conv_type == "direct":
             target = app_module.db_query_one("SELECT id, uid, display_name FROM users WHERE uid = ?", (target_id.upper(),))
             if not target:
                 return jsonify({"error": "用户不存在"}), 404
             mid = app_module.db_execute(
-                "INSERT INTO direct_messages (from_id, to_id, body, created_at, is_read) VALUES (?, ?, ?, ?, 0)",
-                (my_id, target["id"], body, now),
+                "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, burn_after_seconds, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (my_id, target["id"], body, msg_type, media_url, thumb_url, burn_after_seconds, now),
             )
             try:
                 app_module.push_to_user(target["id"], {
@@ -739,16 +770,19 @@ def init_web(app):
                     "data": {
                         "id": mid, "from_uid": my_uid, "from_name": my_name,
                         "from_avatar": my_avatar, "to_uid": target["uid"],
-                        "body": body, "created_at": now,
+                        "body": body, "msg_type": msg_type, "created_at": now,
+                        "media_url": media_url, "thumb_url": thumb_url,
                     },
                 })
             except Exception:
                 pass
             return jsonify({
                 "id": mid, "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "created_at": now,
+                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
+                "media_url": media_url, "thumb_url": thumb_url,
+                "created_at": now,
             })
-        elif msg_type == "group":
+        elif conv_type == "group":
             group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
             if not group:
                 return jsonify({"error": "群不存在"}), 404
@@ -759,8 +793,8 @@ def init_web(app):
             if not member:
                 return jsonify({"error": "不是群成员"}), 403
             mid = app_module.db_execute(
-                "INSERT INTO group_messages (group_id, from_id, body, created_at) VALUES (?, ?, ?, ?)",
-                (gid_str, my_id, body, now),
+                "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (gid_str, my_id, body, msg_type, media_url, thumb_url, now),
             )
             try:
                 members = app_module.db_query_all(
@@ -772,7 +806,9 @@ def init_web(app):
                         "data": {
                             "id": mid, "group_id": group["group_id"],
                             "group_name": group["name"], "from_uid": my_uid,
-                            "from_name": my_name, "body": body, "created_at": now,
+                            "from_name": my_name, "from_avatar": my_avatar,
+                            "body": body, "msg_type": msg_type, "created_at": now,
+                            "media_url": media_url, "thumb_url": thumb_url,
                         },
                     })
             except Exception:
@@ -780,7 +816,9 @@ def init_web(app):
             return jsonify({
                 "id": mid, "group_id": group["group_id"],
                 "from_uid": my_uid, "from_name": my_name,
-                "from_avatar": my_avatar, "body": body, "created_at": now,
+                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
+                "media_url": media_url, "thumb_url": thumb_url,
+                "created_at": now,
             })
         return jsonify({"error": "未知类型"}), 400
 
@@ -824,6 +862,7 @@ def init_web(app):
     app.add_url_rule("/web/static/<path:filename>", "web_static", web_static)
     app.add_url_rule("/web/api/login", "web_api_login", web_api_login, methods=["POST"])
     app.add_url_rule("/web/api/register", "web_api_register", web_api_register, methods=["POST"])
+    app.add_url_rule("/web/api/ws_token", "web_api_ws_token", web_api_ws_token)
     app.add_url_rule("/web/api/contacts", "web_api_contacts", web_api_contacts)
     app.add_url_rule("/web/api/messages/<msg_type>/<target_id>", "web_api_messages", web_api_messages)
     app.add_url_rule("/web/api/mark_read/<msg_type>/<target_id>", "web_api_mark_read", web_api_mark_read, methods=["PUT"])
