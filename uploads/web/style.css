@@ -178,7 +178,7 @@ body {
 }
 
 .contact-item.active {
-	background: var(--active);
+	background: rgba(0,0,0,0.07);
 	font-weight: 500
 }
 
@@ -311,6 +311,43 @@ body {
 	text-align: left;
 }
 
+.message.bare-image {
+	max-width: none;
+}
+
+.message.bare-image .msg-avatar {
+	grid-row: 2;
+	grid-column: 1;
+}
+
+.message.bare-image .message-sender {
+	grid-row: 1;
+	grid-column: 2;
+}
+
+.message.bare-image img:not(.msg-avatar) {
+	grid-row: 2;
+	grid-column: 2;
+}
+
+.message.bare-image .message-time {
+	grid-row: 3;
+	grid-column: 2;
+	text-align: left;
+}
+
+.message.self.bare-image {
+	align-items: flex-end;
+}
+
+.message.self.bare-image img:not(.msg-avatar) {
+	border-radius: 8px;
+}
+
+.message.self.bare-image .message-time {
+	text-align: right;
+}
+
 .msg-avatar {
 	border: none;
 	border-radius: 50%;
@@ -421,7 +458,12 @@ body {
 	padding: 8px;
 	font-size: 14px;
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
-	border-radius: 6px
+	border-radius: 6px;
+	outline: none;
+}
+.input-area textarea:focus {
+	border-color: #fa94a6;
+	box-shadow: 0 0 0 2px rgba(250,148,166,0.15);
 }
 
 .input-buttons {
@@ -445,10 +487,10 @@ body {
 
 
 
-.btn {
+.input-buttons .btn {
 	padding: 6px 16px;
-	border: 1px solid var(--border);
-	background: var(--chat-bg);
+	border: none;
+	background: rgba(0,0,0,0.04);
 	color: var(--text);
 	cursor: pointer;
 	border-radius: 6px;
@@ -478,7 +520,17 @@ body {
 	border: 1px solid var(--border);
 	z-index: 10;
 	border-radius: 6px;
-	overflow: hidden
+	overflow: hidden;
+	opacity: 0;
+	transform: scale(0.9) translateY(8px);
+	transform-origin: bottom right;
+	pointer-events: none;
+	transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.more-menu.show {
+	opacity: 1;
+	transform: scale(1) translateY(0);
+	pointer-events: auto;
 }
 
 .more-menu button {

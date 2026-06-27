@@ -589,8 +589,52 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (msgType === 'image') {
             const mediaUrl = msg.media_url || '';
-            content = `<img src="${mediaUrl}" style="max-width:200px; max-height:200px; cursor:pointer;" class="chat-image" onclick="openImageViewer('${mediaUrl.replace(/'/g, "\\'")}')">`;
-        } else if (msgType === 'video') {
+            const imgEl = document.createElement('img');
+            imgEl.src = mediaUrl;
+            imgEl.style.cssText = 'max-width:200px;max-height:200px;border-radius:8px;cursor:pointer;';
+            imgEl.className = 'chat-image';
+            imgEl.onclick = () => openImageViewer(mediaUrl);
+            imgEl.onerror = function() { this.style.display='none'; };
+
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${isSelf ? 'self' : 'other'} bare-image`;
+            msgDiv.dataset.msgId = msg.id;
+            msgDiv.dataset.fromUid = fromUid;
+            msgDiv.dataset.fromName = sender || '';
+            msgDiv.dataset.msgType = msgType;
+
+            if (!isSelf) {
+                const avatarUrl = msg.from_avatar || msg.sender_avatar || msg.avatar_url || 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
+                const avatarImg = document.createElement('img');
+                avatarImg.src = avatarUrl;
+                avatarImg.className = 'msg-avatar';
+                avatarImg.onerror = () => { avatarImg.src = 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png'; };
+                avatarImg.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (fromUid) openSpacePanel(fromUid);
+                });
+                msgDiv.appendChild(avatarImg);
+            }
+
+            if (!isSelf && sender) {
+                const senderDiv = document.createElement('div');
+                senderDiv.className = 'message-sender';
+                senderDiv.textContent = sender;
+                msgDiv.appendChild(senderDiv);
+            }
+
+            msgDiv.appendChild(imgEl);
+
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'message-time';
+            timeDiv.textContent = time;
+            msgDiv.appendChild(timeDiv);
+
+            msgDiv.dataset.rawBody = JSON.stringify(msg) || '';
+            return msgDiv;
+        }
+
+        if (msgType === 'video') {
             content = `<video controls style="max-width:200px;"><source src="${msg.media_url || ''}"></video>`;
         } else if (msgType === 'audio') {
             content = `<audio controls style="max-width:200px;" src="${msg.media_url || ''}"></audio>`;
@@ -1330,10 +1374,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     moreBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        moreMenu.style.display = moreMenu.style.display === 'block' ? 'none' : 'block';
+        moreMenu.classList.toggle('show');
     });
     document.addEventListener('click', () => {
-        moreMenu.style.display = 'none';
+        moreMenu.classList.remove('show');
     });
 
     document.getElementById('sendImageBtn').addEventListener('click', () => {

@@ -369,7 +369,7 @@ def init_web(app):
                     <button id="moreBtn" class="btn">更多</button>
                     <button id="sendBtn" class="btn primary">发送</button>
                 </div>
-                <div class="more-menu" id="moreMenu" style="display: none;">
+                <div class="more-menu" id="moreMenu">
                     <button id="sendFileBtn">上传文件</button>
                     <button id="sendUrlImageBtn">发送直链图片 (仅限网页端)</button>
                     <button id="sendUrlVoiceBtn">发送直链音频</button>
