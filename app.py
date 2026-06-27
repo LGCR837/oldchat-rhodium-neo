@@ -1985,11 +1985,15 @@ if HAS_EVENTLET:
         sid_from_q = None
         env = getattr(ws, "environ", {})
         query = env.get("QUERY_STRING", "") if isinstance(env, dict) else ""
+        remote_ip = env.get("REMOTE_ADDR", "?") if isinstance(env, dict) else "?"
+        log.info("[ws] 新连接 from=%s path=/v1/ws query='%s'", remote_ip, query)
         for part in query.split("&"):
             if part.startswith("token=") and not token_from_q:
                 token_from_q = part[6:]
             elif part.startswith("sid=") and not sid_from_q:
                 sid_from_q = part[4:]
+
+        log.info("[ws] auth params: token=%s sid=%s", token_from_q[:12]+"..." if token_from_q else None, sid_from_q[:12]+"..." if sid_from_q else None)
 
         # First try query-based auth (access_token)
         if token_from_q:
@@ -1997,16 +2001,22 @@ if HAS_EVENTLET:
                                (token_from_q, now_ts()))
             if row:
                 user_id = row["user_id"]
+                log.info("[ws] token auth OK user_id=%s", user_id)
         # Also try session-based auth (sid)
         if not user_id and sid_from_q:
             row = db_query_one("SELECT user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
                                (sid_from_q, now_ts()))
             if row and row["user_id"]:
                 user_id = row["user_id"]
+                log.info("[ws] sid auth OK user_id=%s (session=%s)", user_id, sid_from_q[:12])
+            else:
+                log.info("[ws] sid auth FAILED: session not found or user_id is null (session=%s)", sid_from_q[:12])
         # Fallback: wait for first message as auth
         if not user_id:
             try:
+                log.info("[ws] 等待首条消息认证...")
                 first = ws.wait()
+                log.info("[ws] 收到首条消息: %r", first)
                 if isinstance(first, str) and first.strip():
                     try:
                         data = json.loads(first)
@@ -2018,6 +2028,7 @@ if HAS_EVENTLET:
                             )
                             if row:
                                 user_id = row["user_id"]
+                                log.info("[ws] 首消息 token auth OK user_id=%s", user_id)
                         if not user_id:
                             sid = data.get("sid") or data.get("session_id")
                             if sid:
@@ -2027,12 +2038,18 @@ if HAS_EVENTLET:
                                 )
                                 if row and row["user_id"]:
                                     user_id = row["user_id"]
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                                    log.info("[ws] 首消息 sid auth OK user_id=%s", user_id)
+                                else:
+                                    log.info("[ws] 首消息 sid auth FAILED: session=%s", sid[:12])
+                    except Exception as e:
+                        log.warning("[ws] 首消息解析失败: %s", e)
+                else:
+                    log.info("[ws] 首消息为空或非字符串")
+            except Exception as e:
+                log.warning("[ws] 等待首消息失败: %s", e)
 
         if not user_id:
+            log.warning("[ws] 认证失败，关闭连接")
             try:
                 ws.send(json.dumps({"type": "error", "message": "authentication required"}))
             except Exception:
