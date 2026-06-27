@@ -128,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const logoutBtn = document.getElementById('logoutBtn');
     const pinSidebarBtn = document.getElementById('pinSidebarBtn');
+    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
     const aboutBtn = document.getElementById('aboutBtn');
 
     const quotePreview = document.getElementById('quotePreview');
@@ -294,6 +295,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event && event.currentTarget) {
             event.currentTarget.classList.add('active');
         }
+
+        if (isMobile()) {
+            sidebar.classList.add('collapsed');
+            expandChat();
+        }
     
         const convKey = `${type}:${id}`;
         currentConv = { type, id, name, key: convKey };
@@ -303,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem('lastConversation', convKey);
         } catch (e) {}
     
-        chatHeader.innerHTML = `<span>${escapeHtml(name)}</span>`;
+        chatHeader.querySelector('.chat-title').textContent = name;
         messagesContainer.innerHTML = '';
         lastRenderedMsg = null;
 
@@ -1373,12 +1379,24 @@ document.addEventListener('DOMContentLoaded', () => {
     let sidebarPinned = true;
     const sidebar = document.querySelector('.sidebar');
 
+    const isMobile = () => window.innerWidth <= 768;
 
     function expandChat() {
-        chatArea.style.marginLeft = sidebar.classList.contains('collapsed') ? '0px' : '280px';
+        if (sidebar.classList.contains('collapsed')) {
+            chatArea.style.marginLeft = '0px';
+        } else {
+            chatArea.style.marginLeft = isMobile() ? '100%' : '280px';
+        }
+    }
+
+    if (isMobile()) {
+        sidebar.classList.remove('collapsed');
+        sidebarPinned = false;
+        expandChat();
     }
 
     pinSidebarBtn.addEventListener('click', () => {
+        if (isMobile()) return;
         sidebarPinned = !sidebarPinned;
         if (sidebarPinned) {
             sidebar.classList.remove('collapsed');
@@ -1396,6 +1414,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 鼠标移到屏幕最左侧边缘时，如果未固定且隐藏，则展开
     document.addEventListener('mousemove', (e) => {
+        if (isMobile()) return;
         if (!sidebarPinned && sidebar.classList.contains('collapsed') && e.clientX < 5) {
             sidebar.classList.remove('collapsed');
             expandChat();
@@ -1406,16 +1425,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // 鼠标离开侧边栏时，如果未固定，自动隐藏（带短延迟）
     let leaveTimer;
     sidebar.addEventListener('mouseleave', () => {
+        if (isMobile()) return;
         if (!sidebarPinned && !sidebar.classList.contains('collapsed')) {
             clearTimeout(leaveTimer);
             leaveTimer = setTimeout(() => {
                 sidebar.classList.add('collapsed');
-                expandChat(); // 隐藏时 margin-left 为 0
+                expandChat();
             }, 200);
         }
     });
     sidebar.addEventListener('mouseenter', () => {
         clearTimeout(leaveTimer);
+    });
+
+    window.addEventListener('resize', () => {
+        expandChat();
+    });
+
+    mobileMenuBtn.addEventListener('click', () => {
+        if (!isMobile()) return;
+        sidebar.classList.remove('collapsed');
     });
 
     // 直链图片/音频发送
