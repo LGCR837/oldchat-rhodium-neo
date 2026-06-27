@@ -373,9 +373,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 content = `<div style="white-space: pre-wrap; word-break: break-word;">${body}</div>`;
             }
         } else if (msgType === 'image') {
-            content = `<img src="${msg.media_url}" style="max-width:200px; max-height:200px; cursor:pointer;" class="chat-image" onclick="openImageViewer('${msg.media_url.replace(/'/g, "\\'")}')">`;
+            const mediaUrl = msg.media_url || '';
+            content = `<img src="${mediaUrl}" style="max-width:200px; max-height:200px; cursor:pointer;" class="chat-image" onclick="openImageViewer('${mediaUrl.replace(/'/g, "\\'")}')">`;
         } else if (msgType === 'video') {
-            content = `<video controls style="max-width:200px;"><source src="${msg.media_url}"></video>`;
+            content = `<video controls style="max-width:200px;"><source src="${msg.media_url || ''}"></video>`;
         } else if (msgType === 'red_packet') {
             let packetData = null;
             try {
@@ -498,8 +499,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const bubbleWrapper = document.createElement('div');
         bubbleWrapper.className = 'message-content';
+        // 群聊或他人消息显示发送者名称，私聊自己的消息不显示
+        const showSender = (convKey && convKey.startsWith('group:')) || (!isSelf);
         bubbleWrapper.innerHTML = `
-            ${msg.group_id && !isSelf ? `<div class="message-sender">${escapeHtml(sender)}</div>` : ''}
+            ${showSender ? `<div class="message-sender">${escapeHtml(sender)}</div>` : ''}
             <div class="message-bubble">${content}</div>
             <div class="message-time">${time}</div>
         `;

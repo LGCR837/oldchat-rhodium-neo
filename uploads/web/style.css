@@ -271,7 +271,6 @@ body {
 	height: 36px;
 	width: 36px;
 	margin-right: 10px;
-	margin-top: 15px;
 	object-fit: cover;
 	background: var(--border)
 }
