@@ -24,8 +24,8 @@ import logging
 import threading
 from pathlib import Path
 
-from flask import (Flask, g, request, jsonify, send_from_directory,
-                   make_response, abort)
+from flask import (Flask, g, request, jsonify, send_from_directory, session,
+                   make_response, abort, redirect)
 
 if HAS_EVENTLET:
     try:
@@ -2107,6 +2107,12 @@ else:
             start_response("501 Not Implemented", [("Content-Type", "application/json")])
             return [b'{"code":501,"msg":"websocket unavailable: install eventlet"}']
         return app(environ, start_response)
+
+# =========================================================================
+#  Web 界面 (由 web.py 提供)
+# =========================================================================
+import web
+web.init_web(app)
 
 # =========================================================================
 #  Main entry
