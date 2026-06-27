@@ -1382,10 +1382,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const isMobile = () => window.innerWidth <= 768;
 
     function expandChat() {
-        if (sidebar.classList.contains('collapsed')) {
+        if (isMobile()) {
             chatArea.style.marginLeft = '0px';
         } else {
-            chatArea.style.marginLeft = isMobile() ? '100%' : '280px';
+            chatArea.style.marginLeft = sidebar.classList.contains('collapsed') ? '0px' : '280px';
         }
     }
 
