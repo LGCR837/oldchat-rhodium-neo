@@ -128,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('fileInput');
     const logoutBtn = document.getElementById('logoutBtn');
     const pinSidebarBtn = document.getElementById('pinSidebarBtn');
+    const mobileMenuBtn = document.getElementById('mobileMenuBtn');
     const aboutBtn = document.getElementById('aboutBtn');
 
     const quotePreview = document.getElementById('quotePreview');
@@ -1439,6 +1440,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('resize', () => {
         expandChat();
+    });
+
+    mobileMenuBtn.addEventListener('click', () => {
+        if (!isMobile()) return;
+        sidebar.classList.remove('collapsed');
     });
 
     // 直链图片/音频发送

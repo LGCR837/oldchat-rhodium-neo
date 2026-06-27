@@ -213,6 +213,26 @@ body {
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
 	background: #fa94a6;
 	color: #ffffff;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.mobile-menu-btn {
+	display: none;
+	background: transparent;
+	border: none;
+	color: #ffffff;
+	font-size: 18px;
+	cursor: pointer;
+	padding: 4px 8px;
+	border-radius: 6px;
+	align-items: center;
+	justify-content: center;
+}
+
+.mobile-menu-btn:hover {
+	background: rgba(255, 255, 255, 0.2);
 }
 
 .messages {
@@ -1000,5 +1020,9 @@ body {
 
     #pinSidebarBtn {
         display: none;
+    }
+
+    .mobile-menu-btn {
+        display: flex;
     }
 }
