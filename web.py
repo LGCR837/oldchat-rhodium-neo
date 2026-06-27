@@ -343,6 +343,8 @@ def init_web(app):
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
     <link rel="stylesheet" href="/web/static/style.css">
     <meta name="uid" content="{{ uid }}">
+    <meta name="name" content="{{ user_name }}">
+    <meta name="avatar" content="{{ user_avatar }}">
     <meta name="theme-merge-messages" content="false">
 </head>
 <body>
@@ -432,6 +434,8 @@ def init_web(app):
             "{{ uid }}", user["uid"]
         ).replace(
             "{{ user_name }}", user["display_name"] or user["username"]
+        ).replace(
+            "{{ user_avatar }}", user["avatar_url"] or ""
         )
 
     def web_login():
