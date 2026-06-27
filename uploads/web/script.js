@@ -181,6 +181,94 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) { console.error(e); }
     }
 
+    // WebSocket 连接
+    let ws = null;
+    let wsReconnectTimer = null;
+
+    async function initWebSocket() {
+        try {
+            const res = await fetch('/api/ws_token');
+            const data = await res.json();
+            if (!data.token) return;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/v1/ws?token=${encodeURIComponent(data.token)}`;
+            ws = new WebSocket(wsUrl);
+            ws.onopen = () => {
+                console.log('[WS] connected');
+            };
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleWsMessage(msg);
+                } catch (e) {
+                    console.error('[WS] parse error:', e);
+                }
+            };
+            ws.onclose = () => {
+                console.log('[WS] closed');
+                ws = null;
+                if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+                wsReconnectTimer = setTimeout(initWebSocket, 3000);
+            };
+            ws.onerror = (e) => {
+                console.error('[WS] error:', e);
+            };
+        } catch (e) {
+            console.error('[WS] init failed:', e);
+            if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = setTimeout(initWebSocket, 5000);
+        }
+    }
+
+    function handleWsMessage(msg) {
+        if (!msg || !msg.type) return;
+        if (msg.type === 'direct_message') {
+            const d = msg.data || {};
+            const fromUid = d.from_uid || '';
+            if (fromUid.toUpperCase() === myUid.toUpperCase()) return;
+            const convKey = `direct:${fromUid}`;
+            const msgObj = {
+                id: d.id,
+                from_uid: fromUid,
+                from_name: d.from_name || fromUid,
+                from_avatar: d.from_avatar || '',
+                body: d.body || '',
+                msg_type: d.msg_type || 'text',
+                media_url: d.media_url || null,
+                thumb_url: d.thumb_url || null,
+                created_at: d.created_at,
+            };
+            appendMessage(msgObj, convKey, seenMsgIds[convKey]);
+            if (currentConv && currentConv.key === convKey) {
+                scrollToBottom(true);
+                fetch(`/api/mark_read/direct/${fromUid}`, { method: 'PUT' });
+            }
+        } else if (msg.type === 'group_message') {
+            const d = msg.data || {};
+            const groupId = d.group_id || '';
+            const fromUid = d.from_uid || '';
+            if (fromUid.toUpperCase() === myUid.toUpperCase()) return;
+            const convKey = `group:${groupId}`;
+            const msgObj = {
+                id: d.id,
+                from_uid: fromUid,
+                from_name: d.from_name || fromUid,
+                from_avatar: d.from_avatar || '',
+                body: d.body || '',
+                msg_type: d.msg_type || 'text',
+                media_url: d.media_url || null,
+                thumb_url: d.thumb_url || null,
+                created_at: d.created_at,
+                group_id: groupId,
+            };
+            appendMessage(msgObj, convKey, seenMsgIds[convKey]);
+            if (currentConv && currentConv.key === convKey) {
+                scrollToBottom(true);
+                fetch(`/api/mark_read/group/${groupId}`, { method: 'PUT' });
+            }
+        }
+    }
+
     function renderContacts() {
         contactList.innerHTML = '';
         contacts.friends.forEach(f => {
@@ -324,10 +412,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function createMessageElement(msg, convKey, currentSeen) {
         if (!msg || !msg.id) return null;
 
-        const fromUid = msg.from_uid || '';
-        const isSelf = fromUid.toUpperCase() === myUid.toUpperCase();
+        const fromUid = msg.from_uid || msg.sender_uid || '';
+        const isSelfByUid = fromUid && myUid && fromUid.toUpperCase() === myUid.toUpperCase();
+        const isSelfByFlag = msg.is_me === true || msg.isSelf === true;
+        const isSelf = isSelfByUid || isSelfByFlag;
 
-        const sender = isSelf ? '你' : (msg.from_name || fromUid);
+        const sender = isSelf ? '' : (msg.from_name || msg.sender_name || msg.display_name || fromUid || '未知用户');
         const time = new Date(msg.created_at * 1000).toLocaleTimeString('zh-CN', { hour12: false });
         const msgType = msg.msg_type || 'text';
         let content = '';
@@ -479,12 +569,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${isSelf ? 'self' : 'other'}`;
         msgDiv.dataset.msgId = msg.id;
-        msgDiv.dataset.fromUid = msg.from_uid || '';
-        msgDiv.dataset.fromName = msg.from_name || msg.from_uid || '';
-        msgDiv.dataset.msgType = msg.msg_type || 'text';
+        msgDiv.dataset.fromUid = fromUid;
+        msgDiv.dataset.fromName = sender || '';
+        msgDiv.dataset.msgType = msgType;
 
         if (!isSelf) {
-            const avatarUrl = msg.from_avatar || 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
+            const avatarUrl = msg.from_avatar || msg.sender_avatar || msg.avatar_url || 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
             const avatarImg = document.createElement('img');
             avatarImg.src = avatarUrl;
             avatarImg.className = 'msg-avatar';
@@ -499,17 +589,23 @@ document.addEventListener('DOMContentLoaded', () => {
             msgDiv.appendChild(avatarImg);
         }
 
-        const bubbleWrapper = document.createElement('div');
-        bubbleWrapper.className = 'message-content';
-        // 群聊且不是自己的消息才显示发送者名称（和OCK一致）
-        bubbleWrapper.innerHTML = `
-            ${msg.group_id && !isSelf ? `<div class="message-sender">${escapeHtml(sender)}</div>` : ''}
-            <div class="message-bubble">${content}</div>
-            <div class="message-time">${time}</div>
-        `;
-        msgDiv.appendChild(bubbleWrapper);
+        if (!isSelf && sender) {
+            const senderDiv = document.createElement('div');
+            senderDiv.className = 'message-sender';
+            senderDiv.textContent = sender;
+            msgDiv.appendChild(senderDiv);
+        }
 
-        const bubble = bubbleWrapper.querySelector('.message-bubble');
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        bubble.innerHTML = content;
+        msgDiv.appendChild(bubble);
+
+        const timeDiv = document.createElement('div');
+        timeDiv.className = 'message-time';
+        timeDiv.textContent = time;
+        msgDiv.appendChild(timeDiv);
+
         if (bubble) {
             msgDiv.dataset.plainText = bubble.innerText;
         }
@@ -1270,27 +1366,7 @@ document.addEventListener('DOMContentLoaded', () => {
         messageInput.focus();
     });
 
-    // 轮询未读
-    setInterval(async () => {
-        if (!currentConv) return;
-        const convKey = currentConv.key;
-        try {
-            const res = await fetch('/api/unread');
-            const data = await res.json();
-            if (data.error) return;
-            // ⚠️ 异步返回后检查会话是否已切换，防止消息错乱
-            if (!currentConv || currentConv.key !== convKey) return;
-            const allUnread = [...(data.direct || []), ...(data.groups || [])];
-            for (const msg of allUnread) {
-                const convKeyMsg = msg.group_id ? `group:${msg.group_id}` : `direct:${msg.from_uid}`;
-                // 只处理当前会话的消息
-                if (convKeyMsg !== convKey) continue;
-                appendMessage(msg, convKey, seenMsgIds[convKey]);
-                scrollToBottom();
-                await fetch(`/api/mark_read/${msg.group_id ? 'group' : 'direct'}/${msg.group_id || msg.from_uid}`, { method: 'PUT' });
-            }
-        } catch (e) {}
-    }, 3000);
+
 
 
     // ===== 侧边栏固定/自动隐藏（绝对定位平移） =====
@@ -1578,49 +1654,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
-
-    // 主题切换菜单
-    const themeMenuBtn = document.getElementById('themeMenuBtn');
-    const themeMenu = document.getElementById('themeMenu');
-    const themeMenuList = document.getElementById('themeMenuList');
-
-    themeMenuBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (themeMenu.style.display === 'block') {
-            themeMenu.style.display = 'none';
-            return;
-        }
-        fetch('/api/themes')
-            .then(r => r.json())
-            .then(data => {
-                const current = data.current;
-                themeMenuList.innerHTML = data.themes.map(t => `
-                    <div class="theme-item ${t.id === current ? 'active' : ''}" data-theme-id="${t.id}">
-                        <span>${escapeHtml(t.name)}</span>
-                        ${t.id === current ? '<span class="theme-check">✓</span>' : ''}
-                    </div>
-                `).join('');
-                themeMenuList.querySelectorAll('.theme-item').forEach(item => {
-                    item.addEventListener('click', (ev) => {
-                        const themeId = item.dataset.themeId;
-                        fetch('/api/set_theme', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({theme_id: themeId})
-                        }).then(r => r.json()).then(res => {
-                            if (res.status === 'ok') location.reload();
-                        });
-                    });
-                });
-                themeMenu.style.display = 'block';
-            });
-    });
-
-    document.addEventListener('click', (e) => {
-        if (!themeMenu.contains(e.target) && e.target !== themeMenuBtn) {
-            themeMenu.style.display = 'none';
-        }
-    });
+    // 连接 WebSocket
+    initWebSocket();
 
     // ===== @ 提及点击跳转 =====
     // 注入跳转目标闪烁动画
