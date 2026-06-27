@@ -937,7 +937,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
         const payload = {
             type: currentConv.type,
-            to_id: currentConv.id,
+            target_id: currentConv.id,
             body: body,
             msg_type: msgType,
             burn_after_seconds: 0,
