@@ -393,6 +393,7 @@ _ws_active_sessions = {}  # user_id -> set(session_ids) (for dedupe)
 def register_ws(user_id, ws):
     with _ws_lock:
         _ws_conns.setdefault(user_id, set()).add(ws)
+    log.info("[ws] user_id=%s 连接成功（当前在线用户数=%d）", user_id, len(_ws_conns))
 
 def unregister_ws(user_id, ws):
     with _ws_lock:
@@ -1990,11 +1991,17 @@ if HAS_EVENTLET:
             elif part.startswith("sid=") and not sid_from_q:
                 sid_from_q = part[4:]
 
-        # First try query-based auth
+        # First try query-based auth (access_token)
         if token_from_q:
             row = db_query_one("SELECT user_id FROM tokens WHERE access_token = ? AND expires_at > ?",
                                (token_from_q, now_ts()))
             if row:
+                user_id = row["user_id"]
+        # Also try session-based auth (sid)
+        if not user_id and sid_from_q:
+            row = db_query_one("SELECT user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
+                               (sid_from_q, now_ts()))
+            if row and row["user_id"]:
                 user_id = row["user_id"]
         # Fallback: wait for first message as auth
         if not user_id:
@@ -2011,6 +2018,15 @@ if HAS_EVENTLET:
                             )
                             if row:
                                 user_id = row["user_id"]
+                        if not user_id:
+                            sid = data.get("sid") or data.get("session_id")
+                            if sid:
+                                row = db_query_one(
+                                    "SELECT user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
+                                    (sid, now_ts()),
+                                )
+                                if row and row["user_id"]:
+                                    user_id = row["user_id"]
                     except Exception:
                         pass
             except Exception:
