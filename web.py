@@ -539,24 +539,23 @@ def init_web(app):
         user = _web_current_user()
         if not user:
             return jsonify({"error": "未登录"}), 401
-        # 生成一个临时的 access_token 用于 WebSocket 连接
         import secrets
         access_token = secrets.token_hex(32)
+        refresh_token = secrets.token_hex(32)
         expires_at = app_module.now_ts() + 7 * 24 * 3600
-        # 检查是否已有 token
         exist = app_module.db_query_one(
-            "SELECT id FROM tokens WHERE user_id = ? AND device = 'web'",
+            "SELECT access_token FROM tokens WHERE user_id = ? LIMIT 1",
             (user["id"],),
         )
         if exist:
             app_module.db_execute(
-                "UPDATE tokens SET access_token = ?, expires_at = ? WHERE id = ?",
-                (access_token, expires_at, exist["id"]),
+                "UPDATE tokens SET access_token = ?, refresh_token = ?, expires_at = ? WHERE user_id = ?",
+                (access_token, refresh_token, expires_at, user["id"]),
             )
         else:
             app_module.db_execute(
-                "INSERT INTO tokens (user_id, device, access_token, refresh_token, expires_at, created_at) VALUES (?, 'web', ?, ?, ?, ?)",
-                (user["id"], access_token, secrets.token_hex(32), expires_at, app_module.now_ts()),
+                "INSERT INTO tokens (access_token, refresh_token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                (access_token, refresh_token, user["id"], app_module.now_ts(), expires_at),
             )
         return jsonify({"token": access_token})
 
