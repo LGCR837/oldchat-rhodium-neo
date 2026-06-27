@@ -862,8 +862,8 @@ def init_web(app):
         msg_type = request.form.get("msg_type", "image")
         my_id = user["id"]
         my_uid = user["uid"]
-        my_name = user.get("display_name") or my_uid
-        my_avatar = user.get("avatar_url") or ""
+        my_name = user["display_name"] or my_uid
+        my_avatar = user["avatar_url"] or ""
         now = app_module.now_ts()
         if conv_type == "direct":
             target = app_module.db_query_one("SELECT id, uid, display_name FROM users WHERE uid = ?", (target_id.upper(),))
