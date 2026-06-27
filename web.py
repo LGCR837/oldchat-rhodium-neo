@@ -820,6 +820,21 @@ def init_web(app):
             })
         return jsonify({"error": "未知类型"}), 400
 
+    def web_api_unread():
+        from flask import jsonify
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        return jsonify({"total": 0, "items": []})
+
+    def web_api_themes():
+        from flask import jsonify
+        return jsonify([{"id": "momopink", "name": "Momo Pink", "preview": ""}])
+
+    def web_api_set_theme():
+        from flask import jsonify
+        return jsonify({"success": True})
+
     def web_api_upload_and_send():
         from flask import request, jsonify
         import app as app_module
@@ -843,10 +858,8 @@ def init_web(app):
         target_id = request.form.get("to_id", "")
         if not target_id:
             return jsonify({"error": "no target_id"}), 400
-        # 发送消息
         body = request.form.get("body", "")
         msg_type = request.form.get("msg_type", "image")
-        # 使用 web_api_send 的逻辑发送
         my_id = user["id"]
         my_uid = user["uid"]
         my_name = user.get("display_name") or my_uid
@@ -897,28 +910,6 @@ def init_web(app):
                 pass
             return jsonify({"message": msg_data})
         return jsonify({"error": "未知类型"}), 400
-
-    def web_api_unread():
-        from flask import jsonify
-        user = _web_current_user()
-        if not user:
-            return jsonify({"error": "未登录"}), 401
-        return jsonify({"total": 0, "items": []})
-
-    def web_api_themes():
-        from flask import jsonify
-        return jsonify([{"id": "momopink", "name": "Momo Pink", "preview": ""}])
-
-    def web_api_set_theme():
-        from flask import jsonify
-        return jsonify({"success": True})
-
-    def web_api_upload_and_send():
-        from flask import jsonify
-        user = _web_current_user()
-        if not user:
-            return jsonify({"error": "未登录"}), 401
-        return jsonify({"error": "暂未实现"}), 501
 
     def web_api_emoticons():
         from flask import jsonify
