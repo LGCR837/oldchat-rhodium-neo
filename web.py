@@ -820,6 +820,84 @@ def init_web(app):
             })
         return jsonify({"error": "未知类型"}), 400
 
+    def web_api_upload_and_send():
+        from flask import request, jsonify
+        import app as app_module
+        import secrets
+        import os
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        if "file" not in request.files:
+            return jsonify({"error": "no file"}), 400
+        f = request.files["file"]
+        if not f or f.filename == "":
+            return jsonify({"error": "empty file"}), 400
+        ext = os.path.splitext(f.filename)[1].lower()
+        filename = secrets.token_hex(16) + ext
+        filepath = os.path.join(app_module.MEDIA_DIR, filename)
+        f.save(filepath)
+        media_url = "/media/" + filename
+        thumb_url = media_url
+        conv_type = request.form.get("conv_type", "direct")
+        target_id = request.form.get("to_id", "")
+        if not target_id:
+            return jsonify({"error": "no target_id"}), 400
+        # 发送消息
+        body = request.form.get("body", "")
+        msg_type = request.form.get("msg_type", "image")
+        # 使用 web_api_send 的逻辑发送
+        my_id = user["id"]
+        my_uid = user["uid"]
+        my_name = user.get("display_name") or my_uid
+        my_avatar = user.get("avatar_url") or ""
+        now = app_module.now_ts()
+        if conv_type == "direct":
+            target = app_module.db_query_one("SELECT id, uid, display_name FROM users WHERE uid = ?", (target_id.upper(),))
+            if not target:
+                return jsonify({"error": "用户不存在"}), 404
+            mid = app_module.db_execute(
+                "INSERT INTO direct_messages (from_id, to_id, body, msg_type, media_url, thumb_url, created_at, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+                (my_id, target["id"], body, msg_type, media_url, thumb_url, now),
+            )
+            msg_data = {
+                "id": mid, "from_uid": my_uid, "from_name": my_name,
+                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
+                "media_url": media_url, "thumb_url": thumb_url,
+                "created_at": now,
+            }
+            try:
+                app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_data})
+            except Exception:
+                pass
+            return jsonify({"message": msg_data})
+        elif conv_type == "group":
+            group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
+            if not group:
+                return jsonify({"error": "群不存在"}), 404
+            gid_str = group["group_id"]
+            member = app_module.db_query_one("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?", (gid_str, my_id))
+            if not member:
+                return jsonify({"error": "不是群成员"}), 403
+            mid = app_module.db_execute(
+                "INSERT INTO group_messages (group_id, from_id, body, msg_type, media_url, thumb_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (gid_str, my_id, body, msg_type, media_url, thumb_url, now),
+            )
+            msg_data = {
+                "id": mid, "from_uid": my_uid, "from_name": my_name,
+                "from_avatar": my_avatar, "body": body, "msg_type": msg_type,
+                "media_url": media_url, "thumb_url": thumb_url,
+                "created_at": now, "group_id": target_id,
+            }
+            try:
+                members = app_module.db_query_all("SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?", (gid_str, my_id))
+                for m in members:
+                    app_module.push_to_user(m["user_id"], {"type": "group_message", "data": msg_data})
+            except Exception:
+                pass
+            return jsonify({"message": msg_data})
+        return jsonify({"error": "未知类型"}), 400
+
     def web_api_unread():
         from flask import jsonify
         user = _web_current_user()
