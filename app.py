@@ -2122,7 +2122,7 @@ _WEB_LOGIN_HTML = r"""<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>OldChat for Kivotos</title>
-    <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
+    <link rel="icon" href="/static/momotalklogo.png" type="image/png">
     <style>
         @font-face {
             font-family: 'zyyt';
@@ -2136,7 +2136,7 @@ _WEB_LOGIN_HTML = r"""<!DOCTYPE html>
             margin: 0; 
             font-family: 'zyyt', '微软雅黑', 'Microsoft YaHei', sans-serif; 
             overflow: hidden; 
-            background: url('https://gwebcdn260523.pages.dev/v1/static/KivotosBg2.jpg') center/cover no-repeat fixed;
+            background: url('/static/KivotosBg2.jpg') center/cover no-repeat fixed;
             min-height: 100vh;
         }
         .login-wrapper { 
@@ -2433,7 +2433,7 @@ _WEB_INDEX_HTML = r"""<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <title>OldChat for Kivotos</title>
-    <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
+    <link rel="icon" href="/web/static/momotalklogo.png" type="image/png">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
     <link rel="stylesheet" href="/web/static/style.css">
     <meta name="uid" content="{{ uid }}">

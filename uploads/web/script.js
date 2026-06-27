@@ -166,7 +166,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     aboutBtn.addEventListener('click', () => {
-        window.location.href = 'https://gwebcdn260523.pages.dev/v1/static/about.html';
+        window.location.href = '/static/about.html';
     });
 
     async function loadContacts() {
@@ -481,11 +481,11 @@ document.addEventListener('DOMContentLoaded', () => {
         msgDiv.dataset.msgType = msg.msg_type || 'text';
 
         if (!isSelf) {
-            const avatarUrl = msg.from_avatar || 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png';
+            const avatarUrl = msg.from_avatar || '/static/default-avatar.png';
             const avatarImg = document.createElement('img');
             avatarImg.src = avatarUrl;
             avatarImg.className = 'msg-avatar';
-            avatarImg.onerror = () => { avatarImg.src = 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png'; };
+            avatarImg.onerror = () => { avatarImg.src = '/static/default-avatar.png'; };
             avatarImg.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const uid = msg.from_uid;
