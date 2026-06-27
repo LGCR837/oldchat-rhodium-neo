@@ -409,6 +409,7 @@ def push_to_user(user_id, payload: dict):
     with _ws_lock:
         conns = list(_ws_conns.get(user_id, set()))
     if not conns:
+        log.info("[push] user_id=%s 不在线（无 WebSocket 连接）", user_id)
         return 0
     text = json.dumps(payload, ensure_ascii=False)
     sent = 0
@@ -416,8 +417,12 @@ def push_to_user(user_id, payload: dict):
         try:
             ws.send(text)
             sent += 1
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("[push] ws.send 失败: %s", e)
+    if sent == 0:
+        log.warning("[push] user_id=%s 有 %d 个连接但全部发送失败", user_id, len(conns))
+    else:
+        log.info("[push] user_id=%s 成功推送 %d/%d 个连接", user_id, sent, len(conns))
     return sent
 
 # --- Helpers --------------------------------------------------------------

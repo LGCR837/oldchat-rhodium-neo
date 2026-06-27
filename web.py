@@ -747,7 +747,9 @@ def init_web(app):
         media_url = data.get("media_url") or None
         thumb_url = data.get("thumb_url") or None
         burn_after_seconds = int(data.get("burn_after_seconds") or 0)
-        if not target_id or not body:
+        if not target_id:
+            return jsonify({"error": "参数错误"}), 400
+        if not body and not media_url and msg_type == "text":
             return jsonify({"error": "参数错误"}), 400
         my_id = user["id"]
         my_uid = user["uid"]
@@ -780,9 +782,10 @@ def init_web(app):
                 "from_avatar": my_avatar,
             }
             try:
-                app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_dict})
-            except Exception:
-                pass
+                sent = app_module.push_to_user(target["id"], {"type": "direct_message", "data": msg_dict})
+                app_module.log.info("[web_send] push to user_id=%s, sent=%s", target["id"], sent)
+            except Exception as e:
+                app_module.log.warning("[web_send] push error: %s", e)
             return jsonify(msg_dict)
         elif conv_type == "group":
             group = app_module.db_query_one("SELECT id, group_id, name FROM groups WHERE group_id = ?", (target_id,))
@@ -877,7 +880,7 @@ def init_web(app):
         elif ext in aud_exts:
             msg_type = "audio"
         else:
-            msg_type = "file"
+            msg_type = "resource"
         my_id = user["id"]
         my_uid = user["uid"]
         my_name = user["display_name"] or my_uid
