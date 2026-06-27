@@ -401,7 +401,6 @@ def unregister_ws(user_id, ws):
             _ws_conns[user_id].discard(ws)
             if not _ws_conns[user_id]:
                 del _ws_conns[user_id]
-    log.info("[ws] user_id=%s 断开连接（剩余在线用户数=%d）", user_id, len(_ws_conns))
 
 def ws_online_user_ids():
     with _ws_lock:
