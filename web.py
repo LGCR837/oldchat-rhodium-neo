@@ -338,6 +338,7 @@ def init_web(app):
 <html lang="zh-CN" data-theme="light">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>OldChat for Kivotos</title>
     <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
