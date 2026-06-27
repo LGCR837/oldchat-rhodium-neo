@@ -149,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const logoutBtn = document.getElementById('logoutBtn');
     const pinSidebarBtn = document.getElementById('pinSidebarBtn');
     const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-    const aboutBtn = document.getElementById('aboutBtn');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
 
     const quotePreview = document.getElementById('quotePreview');
     const quotePreviewText = quotePreview.querySelector('.quote-preview-text');
@@ -186,7 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
         overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;font-family:inherit;opacity:0;transition:opacity 0.2s;';
         const btnBase = 'padding:6px 20px;border-radius:20px;border:none;font-size:14px;font-family:inherit;cursor:pointer;font-weight:500;';
         overlay.innerHTML = `
-            <div style="background:#fa94a6;color:#fff;padding:13px 12px;display:flex;align-items:center;font-size:15px;font-weight:500;flex-shrink:0;position:relative;">
+            <div style="background:var(--header-bg);color:#fff;padding:13px 12px;display:flex;align-items:center;font-size:15px;font-weight:500;flex-shrink:0;position:relative;">
                 <button onclick="this.closest('div[style*=fixed]').remove()" style="position:absolute;left:12px;background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:8px;"><i class="fa-solid fa-chevron-left"></i></button>
                 <span style="width:100%;text-align:center;">用户空间</span>
             </div>
@@ -216,14 +216,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 let btnHtml = '';
                 if (relation !== 'self') {
                     if (relation === 'friend') {
-                        btnHtml = '<button style="' + btnBase + 'background:#fff;color:#fa94a6;border:1.5px solid #fa94a6;" onclick="spMsg()">私信</button>';
+                        btnHtml = '<button style="' + btnBase + 'background:var(--chat-bg);color:var(--accent);border:1.5px solid var(--accent);" onclick="spMsg()">私信</button>';
                     } else if (relation === 'pending_sent') {
-                        btnHtml = '<button style="' + btnBase + 'background:#e0e0e0;color:#888;">已发送申请</button>';
+                        btnHtml = '<button style="' + btnBase + 'background:var(--hover);color:var(--secondary-text);">已发送申请</button>';
                     } else if (relation === 'pending_received') {
-                        btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spRespond(\'accept\')">接受好友</button>' +
-                                 '<button style="' + btnBase + 'background:#e0e0e0;color:#666;" onclick="spRespond(\'reject\')">拒绝</button>';
+                        btnHtml = '<button style="' + btnBase + 'background:var(--accent);color:#fff;" onclick="spRespond(\'accept\')">接受好友</button>' +
+                                 '<button style="' + btnBase + 'background:var(--hover);color:var(--secondary-text);" onclick="spRespond(\'reject\')">拒绝</button>';
                     } else {
-                        btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spAddFriend()">加好友</button>';
+                        btnHtml = '<button style="' + btnBase + 'background:var(--accent);color:#fff;" onclick="spAddFriend()">加好友</button>';
                     }
                 }
 
@@ -240,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     momentsHtml = '<div style="padding:0 16px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;max-width:960px;margin:0 auto;">';
                     mom.forEach(m => {
                         let media = m.media_url ? '<div style="margin-top:8px;"><img src="' + m.media_url + '" style="width:100%;max-height:200px;object-fit:cover;border-radius:8px;cursor:pointer;" onerror="this.style.display=\'none\'"></div>' : '';
-                        momentsHtml += '<div style="background:#fff;border-radius:12px;padding:14px 16px;border:1px solid var(--border);">' +
+                        momentsHtml += '<div style="background:var(--chat-bg);border-radius:12px;padding:14px 16px;border:1px solid var(--border);">' +
                             '<div style="font-size:11px;color:var(--secondary-text);margin-bottom:6px;">' + fmtTs(m.created_at) + '</div>' +
                             '<div style="font-size:14px;color:var(--text);line-height:1.6;white-space:pre-wrap;word-break:break-word;">' + (m.body || '') + '</div>' +
                             media +
@@ -250,7 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     momentsHtml += '</div>';
                 }
                 scroll.innerHTML =
-                    '<div style="background:#fff;padding:28px 20px 20px;display:flex;flex-direction:column;align-items:center;border-bottom:1px solid var(--border);">' +
+                    '<div style="background:var(--chat-bg);padding:28px 20px 20px;display:flex;flex-direction:column;align-items:center;border-bottom:1px solid var(--border);">' +
                         '<img src="' + avatar + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;margin-bottom:12px;background:var(--border);" onerror="this.src=\'' + defaultAvatar + '\'">' +
                         '<div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:4px;">' + (u.display_name || u.username) + '</div>' +
                         '<div style="font-size:12px;color:var(--secondary-text);margin-bottom:4px;">' + u.uid + '</div>' +
@@ -323,8 +323,26 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.href = '/web/logout';
     });
 
-    aboutBtn.addEventListener('click', () => {
-        window.location.href = '/static/about.html';
+    // 主题切换
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+        // 更新图标
+        const icon = themeToggleBtn.querySelector('i');
+        if (theme === 'dark') {
+            icon.className = 'fa-solid fa-moon';
+        } else {
+            icon.className = 'fa-solid fa-circle-half-stroke';
+        }
+    }
+
+    // 初始化主题
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    applyTheme(savedTheme);
+
+    themeToggleBtn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme') || 'light';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
     });
 
     async function loadContacts() {
@@ -398,8 +416,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    const notifySound = new Audio('/uploads/web/notice.mp3');
-
     function handleWsMessage(msg) {
         if (!msg || !msg.type) return;
         if (msg.type === 'direct_message') {
@@ -414,7 +430,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateUnreadBadge(convKey, unreadCounts[convKey]);
                 return;
             }
-            notifySound.play().catch(() => {});
             const msgObj = {
                 id: d.id,
                 from_uid: fromUid,
@@ -442,7 +457,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateUnreadBadge(convKey, unreadCounts[convKey]);
                 return;
             }
-            notifySound.play().catch(() => {});
             const msgObj = {
                 id: d.id,
                 from_uid: fromUid,
@@ -1731,6 +1745,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     window.addEventListener('resize', () => {
+        if (!isMobile()) {
+            // 从手机切换到PC，恢复侧边栏
+            sidebar.classList.remove('collapsed');
+            sidebarPinned = true;
+            pinSidebarBtn.innerHTML = '<i class="fa-solid fa-thumbtack"></i>';
+            pinSidebarBtn.title = '取消固定';
+        }
         expandChat();
     });
 

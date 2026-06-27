@@ -2,6 +2,7 @@
 	--bg: #f4f7f8;
 	--sidebar-bg: #f4f7f8;
 	--chat-bg: #f4f7f8;
+	--header-bg: #fa94a6;
 	--text: #1a1a1a;
 	--secondary-text: #555;
 	--border: #e1e1e1;
@@ -20,6 +21,32 @@
 	--scrollbar-thumb-hover: rgba(0,0,0,0.4);
 	--rp-grad-start: #f44336;
 	--rp-grad-end: #e53935
+}
+
+[data-theme="dark"] {
+	--bg: #1a1a2e;
+	--sidebar-bg: #16213e;
+	--chat-bg: #1a1a2e;
+	--header-bg: #16213e;
+	--text: #e0e0e0;
+	--secondary-text: #a0a0a0;
+	--border: #2a2a4a;
+	--hover: #2a2a4a;
+	--active: #3a3a5a;
+	--shadow: 0 2px 6px rgba(0,0,0,0.3);
+	--msg-other-bg: #2a2a4a;
+	--bubble-other: #3a3a5a;
+	--bubble-self: #4a6a9a;
+	--accent: #7a8a9a;
+	--accent-dark: #6a7a8a;
+	--link-other: #8aa0b8;
+	--link-self: #a0b0c0;
+	--scrollbar-thumb: rgba(255,255,255,0.2);
+	--scrollbar-thumb-hover: rgba(255,255,255,0.4);
+}
+
+body, .sidebar, .chat-area, .messages, .input-area, .contact-list, .chat-header, .sidebar-header, .message-bubble, .message-time, .contact-item, .more-menu, .custom-context-menu, .emoticon-picker {
+	transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
 
 @font-face {
@@ -53,7 +80,7 @@ body {
 	top: 0;
 	height: 100vh;
 	width: 280px;
-	background: #fff;
+	background: var(--sidebar-bg);
 	display: flex;
 	flex-direction: column;
 	transition: transform 0.3s ease;
@@ -70,7 +97,7 @@ body {
 	height: var(--header-height);
 	padding: 0 12px;
 	gap: 5px;
-	background: var(--accent);
+	background: var(--header-bg);
 	flex-wrap: nowrap;
 	position: relative;
 	z-index: 1;
@@ -235,7 +262,7 @@ body {
 	padding: 0 20px;
 	font-size: 16px;
 	font-weight: 500;
-	background: var(--accent);
+	background: var(--header-bg);
 	color: #ffffff;
 	display: flex;
 	align-items: center;
@@ -548,7 +575,7 @@ body {
 	padding: 8px 14px;
 	margin: 6px 0;
 	font-size: 12px;
-	color: #999;
+	color: var(--secondary-text);
 	background: rgba(0,0,0,0.04);
 	border-radius: 10px;
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
@@ -558,7 +585,7 @@ body {
 
 .input-area {
 	padding: 10px;
-	background: #fff;
+	background: var(--sidebar-bg);
 	box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
 }
 

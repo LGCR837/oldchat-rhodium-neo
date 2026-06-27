@@ -183,6 +183,20 @@ def init_web(app):
             font-size: 0.7rem;
             color: #bbb;
         }
+        [data-theme="dark"] body { background: #1a1a2e; }
+        [data-theme="dark"] .login-header { background: #16213e; }
+        [data-theme="dark"] .login-card { background: #2a2a4a; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
+        [data-theme="dark"] .login-card-top h1 { color: #8aa0b8; }
+        [data-theme="dark"] .tab { background: #3a3a5a; color: #a0a0a0; }
+        [data-theme="dark"] .tab.active { background: #8aa0b8; color: #fff; }
+        [data-theme="dark"] .form-group input { background: #1a1a2e; border-color: #3a3a5a; color: #e0e0e0; }
+        [data-theme="dark"] .form-group input:focus { border-color: #8aa0b8; }
+        [data-theme="dark"] .checkbox-group label { color: #a0a0a0; }
+        [data-theme="dark"] .login-card button[type="submit"] { background: #8aa0b8; }
+        [data-theme="dark"] .login-card button[type="submit"]:hover { background: #7a90a8; }
+        [data-theme="dark"] .msg-error { background: #3a1a1a; color: #ff6b6b; }
+        [data-theme="dark"] .msg-success { background: #1a3a1a; color: #6bff6b; }
+        [data-theme="dark"] .extra-note { color: #666; }
     </style>
 </head>
 <body>
@@ -232,6 +246,11 @@ def init_web(app):
         </div>
     </div>
     <script>
+        // 初始化主题
+        (function() {
+            var theme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
         document.querySelectorAll('.tab').forEach(function(tab) {
             tab.addEventListener('click', function() {
                 document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -344,7 +363,7 @@ def init_web(app):
             <div class="sidebar-header">
                 <span class="user-info">{{ user_name }}</span>
                 <button id="pinSidebarBtn" class="icon-btn" title="取消固定"><i class="fa-solid fa-thumbtack"></i></button>
-                <button id="aboutBtn" class="icon-btn" title="关于"><i class="fa-solid fa-circle-info"></i></button>
+                <button id="themeToggleBtn" class="icon-btn" title="切换主题"><i class="fa-solid fa-circle-half-stroke"></i></button>
                 <button id="logoutBtn" class="icon-btn" title="退出登录"><i class="fa-solid fa-right-from-bracket"></i></button>
             </div>
             <div class="contact-list" id="contactList"></div>
@@ -1128,6 +1147,22 @@ def init_web(app):
             color: var(--secondary-text);
             margin-bottom: 10px;
         }
+        [data-theme="dark"] .space-header { background: #16213e; }
+        [data-theme="dark"] .space-header .back-btn { color: #e0e0e0; }
+        [data-theme="dark"] .space-profile { background: #2a2a4a; }
+        [data-theme="dark"] .space-name { color: #e0e0e0; }
+        [data-theme="dark"] .space-uid { color: #a0a0a0; }
+        [data-theme="dark"] .space-bio { color: #a0a0a0; }
+        [data-theme="dark"] .space-section-title { color: #e0e0e0; }
+        [data-theme="dark"] .moment-card { background: #2a2a4a; border-color: #3a3a5a; }
+        [data-theme="dark"] .moment-card .moment-body { color: #e0e0e0; }
+        [data-theme="dark"] .space-empty { color: #a0a0a0; }
+        [data-theme="dark"] .space-actions .btn-friend { background: #7a8a9a; }
+        [data-theme="dark"] .space-actions .btn-friend:hover { background: #6a7a8a; }
+        [data-theme="dark"] .space-actions .btn-friend.friendship { background: #3a3a5a; color: #a0a0a0; }
+        [data-theme="dark"] .space-actions .btn-msg { background: #2a2a4a; color: #8aa0b8; border-color: #8aa0b8; }
+        [data-theme="dark"] .space-actions .btn-msg:hover { background: #3a3a5a; }
+        [data-theme="dark"] .space-actions .btn-back { background: #3a3a5a; color: #a0a0a0; }
     </style>
 </head>
 <body>
@@ -1142,6 +1177,10 @@ def init_web(app):
     </div>
 
     <script>
+        (function() {
+            var theme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
         (function() {
             const parts = location.pathname.split('/');
             const uid = parts[parts.length - 1];
