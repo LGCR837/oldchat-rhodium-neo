@@ -991,3 +991,14 @@ body {
     padding-top: 11px;
     padding-bottom: 11px;
 }
+
+/* ===== 移动端适配 ===== */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 100%;
+    }
+
+    #pinSidebarBtn {
+        display: none;
+    }
+}

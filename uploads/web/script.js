@@ -294,6 +294,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event && event.currentTarget) {
             event.currentTarget.classList.add('active');
         }
+
+        if (isMobile()) {
+            sidebar.classList.add('collapsed');
+            expandChat();
+        }
     
         const convKey = `${type}:${id}`;
         currentConv = { type, id, name, key: convKey };
@@ -1373,12 +1378,24 @@ document.addEventListener('DOMContentLoaded', () => {
     let sidebarPinned = true;
     const sidebar = document.querySelector('.sidebar');
 
+    const isMobile = () => window.innerWidth <= 768;
 
     function expandChat() {
-        chatArea.style.marginLeft = sidebar.classList.contains('collapsed') ? '0px' : '280px';
+        if (isMobile()) {
+            chatArea.style.marginLeft = '0px';
+        } else {
+            chatArea.style.marginLeft = sidebar.classList.contains('collapsed') ? '0px' : '280px';
+        }
+    }
+
+    if (isMobile()) {
+        sidebar.classList.add('collapsed');
+        sidebarPinned = false;
+        expandChat();
     }
 
     pinSidebarBtn.addEventListener('click', () => {
+        if (isMobile()) return;
         sidebarPinned = !sidebarPinned;
         if (sidebarPinned) {
             sidebar.classList.remove('collapsed');
@@ -1396,6 +1413,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 鼠标移到屏幕最左侧边缘时，如果未固定且隐藏，则展开
     document.addEventListener('mousemove', (e) => {
+        if (isMobile()) return;
         if (!sidebarPinned && sidebar.classList.contains('collapsed') && e.clientX < 5) {
             sidebar.classList.remove('collapsed');
             expandChat();
@@ -1406,16 +1424,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // 鼠标离开侧边栏时，如果未固定，自动隐藏（带短延迟）
     let leaveTimer;
     sidebar.addEventListener('mouseleave', () => {
+        if (isMobile()) return;
         if (!sidebarPinned && !sidebar.classList.contains('collapsed')) {
             clearTimeout(leaveTimer);
             leaveTimer = setTimeout(() => {
                 sidebar.classList.add('collapsed');
-                expandChat(); // 隐藏时 margin-left 为 0
+                expandChat();
             }, 200);
         }
     });
     sidebar.addEventListener('mouseenter', () => {
         clearTimeout(leaveTimer);
+    });
+
+    window.addEventListener('resize', () => {
+        expandChat();
     });
 
     // 直链图片/音频发送
