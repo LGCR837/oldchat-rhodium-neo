@@ -859,7 +859,18 @@ def init_web(app):
         if not target_id:
             return jsonify({"error": "no target_id"}), 400
         body = request.form.get("body", "")
-        msg_type = request.form.get("msg_type", "image")
+        # 根据扩展名自动判断 msg_type
+        img_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'}
+        vid_exts = {'.mp4', '.webm', '.avi', '.mov', '.mkv'}
+        aud_exts = {'.mp3', '.wav', '.ogg', '.aac', '.m4a', '.flac'}
+        if ext in img_exts:
+            msg_type = "image"
+        elif ext in vid_exts:
+            msg_type = "video"
+        elif ext in aud_exts:
+            msg_type = "audio"
+        else:
+            msg_type = "file"
         my_id = user["id"]
         my_uid = user["uid"]
         my_name = user["display_name"] or my_uid

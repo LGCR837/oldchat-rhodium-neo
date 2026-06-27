@@ -475,6 +475,12 @@ document.addEventListener('DOMContentLoaded', () => {
             content = `<img src="${mediaUrl}" style="max-width:200px; max-height:200px; cursor:pointer;" class="chat-image" onclick="openImageViewer('${mediaUrl.replace(/'/g, "\\'")}')">`;
         } else if (msgType === 'video') {
             content = `<video controls style="max-width:200px;"><source src="${msg.media_url || ''}"></video>`;
+        } else if (msgType === 'audio') {
+            content = `<audio controls style="max-width:200px;" src="${msg.media_url || ''}"></audio>`;
+        } else if (msgType === 'file' || msg.media_url) {
+            const fileUrl = msg.media_url || '';
+            const fileName = fileUrl.split('/').pop();
+            content = `<a href="${fileUrl}" target="_blank" class="file-download-btn" style="color:var(--link-other);">📎 ${escapeHtml(fileName)}</a>`;
         } else if (msgType === 'red_packet') {
             let packetData = null;
             try {
@@ -1206,22 +1212,55 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.append('file', file);
         formData.append('conv_type', currentConv.type);
         formData.append('to_id', currentConv.id);
+
+        // 立即显示发送中消息（半透明）
+        const tempId = 'temp_' + Date.now();
+        const tempMsg = {
+            id: tempId,
+            from_uid: myUid,
+            from_name: myName,
+            from_avatar: myAvatar || '',
+            body: '',
+            msg_type: 'file',
+            media_url: URL.createObjectURL(file),
+            thumb_url: null,
+            created_at: Math.floor(Date.now() / 1000),
+        };
+        if (currentConv.type === 'group') {
+            tempMsg.group_id = currentConv.id;
+        }
+        appendMessage(tempMsg, currentConv.key, seenMsgIds[currentConv.key]);
+        scrollToBottom(true);
+        const tempEl = messagesContainer.querySelector(`[data-msg-id="${tempId}"]`);
+        if (tempEl) {
+            tempEl.style.opacity = '0.5';
+        }
+
         try {
             const res = await fetch('/api/upload_and_send', {
                 method: 'POST',
                 body: formData
             });
             const data = await res.json();
-            if (data.error) {
-                alert('发送失败: ' + data.error);
+            if (data.error || !data.message || !data.message.id) {
+                if (tempEl) tempEl.remove();
+                seenMsgIds[currentConv.key]?.delete(tempId);
+                alert('发送失败: ' + (data.error || '未知错误'));
                 return;
             }
-            if (data.message) {
-                appendMessage(data.message, currentConv.key, seenMsgIds[currentConv.key]);
-                scrollToBottom(true);
+            const msg = data.message;
+            // 替换临时消息
+            if (tempEl) {
+                const newEl = createMessageElement(msg, currentConv.key, seenMsgIds[currentConv.key]);
+                if (newEl) {
+                    tempEl.replaceWith(newEl);
+                }
             }
+            scrollToBottom(true);
         } catch (error) {
             console.error(error);
+            if (tempEl) tempEl.remove();
+            seenMsgIds[currentConv.key]?.delete(tempId);
             alert('网络错误，发送失败');
         }
     }
