@@ -11,8 +11,9 @@
 	--msg-other-bg: #eeeeee;
 	--bubble-other: #4c5b70;
 	--bubble-self: #4a8acb;
-	--accent: #ff89a1;
-	--accent-dark: #ff738e;
+	--accent: #fa94a6;
+	--accent-dark: #e88294;
+	--header-height: 46px;
 	--link-other: #ff89a1;
 	--link-self: #cccccc;
 	--scrollbar-thumb: rgba(0,0,0,0.2);
@@ -52,10 +53,9 @@ body {
 	top: 0;
 	height: 100vh;
 	width: 280px;
-	background: transparent;
+	background: #fff;
 	display: flex;
 	flex-direction: column;
-	border-right: 1px solid var(--border);
 	transition: transform 0.3s ease;
 	z-index: 10
 }
@@ -67,14 +67,14 @@ body {
 .sidebar-header {
 	display: flex;
 	align-items: center;
-	padding: 12px 12px;
+	height: var(--header-height);
+	padding: 0 12px;
 	gap: 5px;
-	background: #fa94a6;
+	background: var(--accent);
 	flex-wrap: nowrap;
 	position: relative;
-	border-right: 1px solid #fa94a6;
-	margin-right: -1px;
 	z-index: 1;
+	box-sizing: border-box;
 }
 
 .sidebar-header .user-info,
@@ -141,7 +141,8 @@ body {
 	flex: 1;
 	overflow-y: auto;
 	scrollbar-width: thin;
-	scrollbar-color: var(--scrollbar-thumb) transparent
+	scrollbar-color: var(--scrollbar-thumb) transparent;
+	box-shadow: 2px 0 6px rgba(0,0,0,0.04);
 }
 
 .contact-list::-webkit-scrollbar {
@@ -164,12 +165,9 @@ body {
 .contact-item {
 	padding: 12px 15px;
 	cursor: pointer;
-	border-bottom: 1px solid var(--border);
+	border-bottom: 1px solid rgba(0,0,0,0.06);
 	transition: background 0.2s;
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
-	border-radius: 6px;
-	margin: 2px 6px;
-	width: calc(100% - 12px);
 	background: transparent
 }
 
@@ -178,7 +176,7 @@ body {
 }
 
 .contact-item.active {
-	background: rgba(0,0,0,0.07);
+	background: linear-gradient(to right, rgba(0,0,0,0.07), rgba(0,0,0,0.02));
 	font-weight: 500
 }
 
@@ -204,16 +202,17 @@ body {
 }
 
 .chat-header {
-	padding: 12px 20px;
+	height: var(--header-height);
+	padding: 0 20px;
 	font-size: 16px;
 	font-weight: 500;
-	background: inherit;
-	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
-	background: #fa94a6;
+	background: var(--accent);
 	color: #ffffff;
 	display: flex;
 	align-items: center;
 	gap: 10px;
+	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
+	box-sizing: border-box;
 }
 
 .mobile-menu-btn {
@@ -242,6 +241,14 @@ body {
 	gap: 12px;
 	scrollbar-color: rgba(0,0,0,0.2) transparent;
     min-width: 0
+}
+
+@keyframes msgFadeIn {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+.messages.fade-in {
+	animation: msgFadeIn 0.6s ease;
 }
 
 .messages::-webkit-scrollbar {
@@ -420,7 +427,12 @@ body {
 	color: #b0b0b0;
 	margin-top: 4px;
 	text-align: right;
-	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif
+	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
+	opacity: 0;
+	transition: opacity 0.2s ease;
+}
+.message:hover .message-time {
+	opacity: 1;
 }
 
 .system-msg {
@@ -444,26 +456,31 @@ body {
 }
 
 .input-area {
-	border-top: 1px solid var(--border);
 	padding: 10px;
-	background: transparent
+	background: #fff;
+	box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
 }
 
 .input-area textarea {
 	width: 100%;
 	resize: none;
-	border: 1px solid var(--border);
-	background: transparent;
+	border: none;
+	background: rgba(0,0,0,0.025);
 	color: var(--text);
 	padding: 8px;
 	font-size: 14px;
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
 	border-radius: 6px;
 	outline: none;
+	transition: background 0.2s;
+	min-height: 52px;
+	line-height: 1.5;
+	box-sizing: border-box;
 }
 .input-area textarea:focus {
-	border-color: #fa94a6;
-	box-shadow: 0 0 0 2px rgba(250,148,166,0.15);
+	border: none;
+	box-shadow: none;
+	background: rgba(0,0,0,0.025);
 }
 
 .input-buttons {
@@ -495,7 +512,18 @@ body {
 	cursor: pointer;
 	border-radius: 6px;
 	font-size: 14px;
-	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif
+	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
+}
+
+.btn {
+	padding: 6px 16px;
+	border: none;
+	background: rgba(0,0,0,0.04);
+	color: var(--text);
+	cursor: pointer;
+	border-radius: 6px;
+	font-size: 14px;
+	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
 }
 
 .btn:hover {
@@ -558,7 +586,15 @@ body {
 	z-index: 9999;
 	min-width: 140px;
 	border-radius: 6px;
-	overflow: hidden
+	overflow: hidden;
+	opacity: 0;
+	transform: scale(0.9);
+	transform-origin: top left;
+	transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.custom-context-menu.show {
+	opacity: 1;
+	transform: scale(1);
 }
 
 .context-menu-item {
@@ -817,9 +853,6 @@ body {
 	transition: height 0.2s ease, opacity 0.2s ease
 }
 
-
-}
-
 .voice-duration {
 	font-size: 11px;
 	opacity: 0.7;
@@ -832,38 +865,6 @@ body {
 
 .voice-message audio {
 	display: none
-}
-
-/* === 页面级背景波形图 === */
-.voice-bg-wave {
-	position: absolute;
-	bottom: 0;
-	left: 0;
-	width: 100%;
-	height: 320px;
-	pointer-events: none;
-	z-index: -1;
-	opacity: 0;
-	transition: opacity 0.3s ease;
-	overflow: hidden;
-}
-
-.voice-bg-wave.visible {
-	opacity: 1;
-}
-
-.voice-bg-wave-bars {
-	position: absolute;
-	bottom: 0;
-	left: 0;
-	width: 100%;
-	height: 320px;
-}
-
-.voice-bg-wave-canvas {
-	display: block;
-	width: 100%;
-	height: 100%;
 }
 
 .red-packet-card {
@@ -1013,7 +1014,7 @@ body {
 }
 
 .url-input-actions .btn {
-	min-width: 70px
+	min-width: 70px;
 }
 
 .theme-menu {
@@ -1061,25 +1062,14 @@ body {
 	transform: scale(0.98)
 }
 
-.sidebar-header .user-info small,
-.sidebar-header .user-info br {
-    display: none;
-}
-
 .sidebar-header .icon-btn + .icon-btn {
     margin-left: 2px;
-}
-
-.sidebar-header {
-    padding-top: 11px;
-    padding-bottom: 11px;
 }
 
 /* ===== 移动端适配 ===== */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
-        background: var(--bg);
     }
 
     #pinSidebarBtn {

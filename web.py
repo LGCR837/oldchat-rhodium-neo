@@ -339,11 +339,10 @@ def init_web(app):
     <meta name="theme-merge-messages" content="false">
 </head>
 <body>
-    <div class="app-container">
-        <div class="voice-bg-wave" id="voiceBgWave"><div class="voice-bg-wave-bars"></div></div>
+        <div class="app-container">
         <aside class="sidebar">
             <div class="sidebar-header">
-                <span class="user-info">{{ user_name }}<br><small>OldChat for Kivotos</small></span>
+                <span class="user-info">{{ user_name }}</span>
                 <button id="pinSidebarBtn" class="icon-btn" title="取消固定"><i class="fa-solid fa-thumbtack"></i></button>
                 <button id="aboutBtn" class="icon-btn" title="关于"><i class="fa-solid fa-circle-info"></i></button>
                 <button id="logoutBtn" class="icon-btn" title="退出登录"><i class="fa-solid fa-right-from-bracket"></i></button>
@@ -361,7 +360,7 @@ def init_web(app):
                     <span class="quote-preview-text"></span>
                     <button id="cancelQuoteBtn" class="icon-btn" title="取消引用">✖</button>
                 </div>
-                <textarea id="messageInput" placeholder="输入消息... (Enter发送, Shift+Enter换行)" rows="2"></textarea>
+                <textarea id="messageInput" placeholder="输入消息..." rows="1"></textarea>
                 <div class="input-buttons">
                     <button id="nowPlayingBtn" class="btn" style="display:none;" title="跳转到正在播放的语音"><i class="fa-solid fa-music"></i></button>
                     <button id="sendImageBtn" class="btn">图片</button>
@@ -1178,7 +1177,7 @@ def init_web(app):
                     } else if (relation === 'pending_received') {
                         btnHtml = '<button class="btn-friend" onclick="respondFriend(\'accept\')">接受好友</button><button class="btn-back" onclick="respondFriend(\'reject\')">拒绝</button>';
                     } else {
-                        btnHtml = '<button class="btn-friend" onclick="addFriend()">加好友</button><button class="btn-msg" onclick="location.href=\'/web/\'">私信</button>';
+                        btnHtml = '<button class="btn-friend" onclick="addFriend()">加好友</button>';
                     }
                     document.getElementById('profileArea').innerHTML =
                         '<div class="space-profile">' +

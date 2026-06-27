@@ -393,7 +393,7 @@ _ws_active_sessions = {}  # user_id -> set(session_ids) (for dedupe)
 def register_ws(user_id, ws):
     with _ws_lock:
         _ws_conns.setdefault(user_id, set()).add(ws)
-    log.info("[ws] user_id=%s 连接成功（当前在线用户数=%d）", user_id, len(_ws_conns))
+    log.debug("[ws] user_id=%s 连接成功（当前在线用户数=%d）", user_id, len(_ws_conns))
 
 def unregister_ws(user_id, ws):
     with _ws_lock:
@@ -410,7 +410,7 @@ def push_to_user(user_id, payload: dict):
     with _ws_lock:
         conns = list(_ws_conns.get(user_id, set()))
     if not conns:
-        log.info("[push] user_id=%s 不在线（无 WebSocket 连接）", user_id)
+        log.debug("[push] user_id=%s 不在线（无 WebSocket 连接）", user_id)
         return 0
     text = json.dumps(payload, ensure_ascii=False)
     sent = 0
@@ -423,7 +423,7 @@ def push_to_user(user_id, payload: dict):
     if sent == 0:
         log.warning("[push] user_id=%s 有 %d 个连接但全部发送失败", user_id, len(conns))
     else:
-        log.info("[push] user_id=%s 成功推送 %d/%d 个连接", user_id, sent, len(conns))
+        log.debug("[push] user_id=%s 成功推送 %d/%d 个连接", user_id, sent, len(conns))
     return sent
 
 # --- Helpers --------------------------------------------------------------
@@ -1987,14 +1987,14 @@ if HAS_EVENTLET:
         env = getattr(ws, "environ", {})
         query = env.get("QUERY_STRING", "") if isinstance(env, dict) else ""
         remote_ip = env.get("REMOTE_ADDR", "?") if isinstance(env, dict) else "?"
-        log.info("[ws] 新连接 from=%s path=/v1/ws query='%s'", remote_ip, query)
+        log.debug("[ws] 新连接 from=%s path=/v1/ws query='%s'", remote_ip, query)
         for part in query.split("&"):
             if part.startswith("token=") and not token_from_q:
                 token_from_q = part[6:]
             elif part.startswith("sid=") and not sid_from_q:
                 sid_from_q = part[4:]
 
-        log.info("[ws] auth params: token=%s sid=%s", token_from_q[:12]+"..." if token_from_q else None, sid_from_q[:12]+"..." if sid_from_q else None)
+        log.debug("[ws] auth params: token=%s sid=%s", token_from_q[:12]+"..." if token_from_q else None, sid_from_q[:12]+"..." if sid_from_q else None)
 
         # First try query-based auth (access_token)
         if token_from_q:
@@ -2002,22 +2002,22 @@ if HAS_EVENTLET:
                                (token_from_q, now_ts()))
             if row:
                 user_id = row["user_id"]
-                log.info("[ws] token auth OK user_id=%s", user_id)
+                log.debug("[ws] token auth OK user_id=%s", user_id)
         # Also try session-based auth (sid)
         if not user_id and sid_from_q:
             row = db_query_one("SELECT user_id FROM sessions WHERE session_id = ? AND expires_at > ?",
                                (sid_from_q, now_ts()))
             if row and row["user_id"]:
                 user_id = row["user_id"]
-                log.info("[ws] sid auth OK user_id=%s (session=%s)", user_id, sid_from_q[:12])
+                log.debug("[ws] sid auth OK user_id=%s (session=%s)", user_id, sid_from_q[:12])
             else:
-                log.info("[ws] sid auth FAILED: session not found or user_id is null (session=%s)", sid_from_q[:12])
+                log.debug("[ws] sid auth FAILED: session not found or user_id is null (session=%s)", sid_from_q[:12])
         # Fallback: wait for first message as auth
         if not user_id:
             try:
-                log.info("[ws] 等待首条消息认证...")
+                log.debug("[ws] 等待首条消息认证...")
                 first = ws.wait()
-                log.info("[ws] 收到首条消息: %r", first)
+                log.debug("[ws] 收到首条消息: %r", first)
                 if isinstance(first, str) and first.strip():
                     try:
                         data = json.loads(first)
@@ -2029,7 +2029,7 @@ if HAS_EVENTLET:
                             )
                             if row:
                                 user_id = row["user_id"]
-                                log.info("[ws] 首消息 token auth OK user_id=%s", user_id)
+                                log.debug("[ws] 首消息 token auth OK user_id=%s", user_id)
                         if not user_id:
                             sid = data.get("sid") or data.get("session_id")
                             if sid:
@@ -2039,13 +2039,13 @@ if HAS_EVENTLET:
                                 )
                                 if row and row["user_id"]:
                                     user_id = row["user_id"]
-                                    log.info("[ws] 首消息 sid auth OK user_id=%s", user_id)
+                                    log.debug("[ws] 首消息 sid auth OK user_id=%s", user_id)
                                 else:
-                                    log.info("[ws] 首消息 sid auth FAILED: session=%s", sid[:12])
+                                    log.debug("[ws] 首消息 sid auth FAILED: session=%s", sid[:12])
                     except Exception as e:
                         log.warning("[ws] 首消息解析失败: %s", e)
                 else:
-                    log.info("[ws] 首消息为空或非字符串")
+                    log.debug("[ws] 首消息为空或非字符串")
             except Exception as e:
                 log.warning("[ws] 等待首消息失败: %s", e)
 
@@ -2187,11 +2187,34 @@ if __name__ == "__main__":
     print()
     if HAS_EVENTLET:
         try:
+            import threading as _threading
+            if IS_WINDOWS:
+                import ctypes
+                _kernel32 = ctypes.windll.kernel32
+                def _ctrl_handler(sig):
+                    if sig == 0:
+                        import os
+                        os._exit(0)
+                    return True
+                _HANDLER = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)(_ctrl_handler)
+                _kernel32.SetConsoleCtrlHandler(_HANDLER, True)
+            else:
+                import signal as _signal
+                def _force_exit(sig, frame):
+                    import os
+                    os._exit(0)
+                _signal.signal(_signal.SIGINT, _force_exit)
+                _signal.signal(_signal.SIGTERM, _force_exit)
             eventlet.wsgi.server(eventlet.listen((host, port)), dispatch, log_output=False)
+        except (KeyboardInterrupt, SystemExit):
+            pass
         except Exception as _e:
             log.error("eventlet 启动失败，退回 threading 模式: %s", _e)
             app.run(host=host, port=port, debug=False, threaded=True)
     else:
-        app.run(host=host, port=port, debug=False, threaded=True)
+        try:
+            app.run(host=host, port=port, debug=False, threaded=True)
+        except (KeyboardInterrupt, SystemExit):
+            pass
 else:
     init_db()

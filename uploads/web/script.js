@@ -207,8 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spRespond(\'accept\')">接受好友</button>' +
                                  '<button style="' + btnBase + 'background:#e0e0e0;color:#666;" onclick="spRespond(\'reject\')">拒绝</button>';
                     } else {
-                        btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spAddFriend()">加好友</button>' +
-                                 '<button style="' + btnBase + 'background:#fff;color:#fa94a6;border:1.5px solid #fa94a6;" onclick="spMsg()">私信</button>';
+                        btnHtml = '<button style="' + btnBase + 'background:#fa94a6;color:#fff;" onclick="spAddFriend()">加好友</button>';
                     }
                 }
 
@@ -290,7 +289,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function hideContextMenu() {
         if (contextMenu) {
-            contextMenu.remove();
+            const el = contextMenu;
+            el.classList.remove('show');
+            el.addEventListener('transitionend', () => el.remove(), { once: true });
+            setTimeout(() => el.remove(), 200);
             contextMenu = null;
             contextMsgId = null;
         }
@@ -413,19 +415,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderContacts() {
         contactList.innerHTML = '';
-        contacts.friends.forEach(f => {
-            const div = createContactItem(f.uid, f.name, 'direct');
-            contactList.appendChild(div);
-        });
-        contacts.groups.forEach(g => {
-            const div = createContactItem(g.id, g.name, 'group');
-            contactList.appendChild(div);
-        });
+        if (contacts.groups.length > 0) {
+            const sep = document.createElement('div');
+            sep.style.cssText = 'padding:8px 15px;font-size:11px;color:#999;font-weight:500;';
+            sep.textContent = '群聊';
+            contactList.appendChild(sep);
+            contacts.groups.forEach(g => {
+                const div = createContactItem(g.id, g.name, 'group');
+                contactList.appendChild(div);
+            });
+        }
+        if (contacts.friends.length > 0) {
+            const sep = document.createElement('div');
+            sep.style.cssText = 'padding:8px 15px;font-size:11px;color:#999;font-weight:500;';
+            sep.textContent = '私聊';
+            contactList.appendChild(sep);
+            contacts.friends.forEach(f => {
+                const div = createContactItem(f.uid, f.name, 'direct');
+                contactList.appendChild(div);
+            });
+        }
     }
 
     function createContactItem(id, name, type) {
         const div = document.createElement('div');
         div.className = 'contact-item';
+        div.dataset.convKey = type + ':' + id;
         div.innerHTML = `<div class="name">${escapeHtml(name)}</div><div class="uid">${escapeHtml(id)}</div>`;
         div.addEventListener('click', (e) => switchConversation(type, id, name, e));
         return div;
@@ -500,6 +515,9 @@ document.addEventListener('DOMContentLoaded', () => {
             msgs.forEach(msg => {
                 appendMessage(msg, convKey, currentSeen);
             });
+            messagesContainer.classList.remove('fade-in');
+            void messagesContainer.offsetWidth;
+            messagesContainer.classList.add('fade-in');
             scrollToBottom(true);
             await fetch(`/web/api/mark_read/${type}/${id}`, { method: 'PUT' });
 
@@ -685,6 +703,27 @@ document.addEventListener('DOMContentLoaded', () => {
             content = displayText
                 ? `<div style="margin-bottom:6px;">${displayText}</div>${fileCardHtml}`
                 : fileCardHtml;
+        } else if (msgType === 'voice') {
+            if (msg.media_url) {
+                content = `
+                    <div class="voice-message" data-url="${msg.media_url}">
+                        <div class="voice-top-row">
+                            <button class="voice-play-btn">▶</button>
+                            <div class="voice-wave" data-url="${msg.media_url}">
+                                <div class="voice-wave-bg" style="width:0%"></div>
+                                <div class="voice-wave-bars">${'<span></span>'.repeat(20)}</div>
+                            </div>
+                            <span class="voice-duration">0:00</span>
+                        </div>
+                        <audio preload="metadata" src="${msg.media_url}"></audio>
+                    </div>`;
+            } else {
+                const dur = (msg.duration_ms || 0) / 1000;
+                const mins = Math.floor(dur / 60);
+                const secs = Math.floor(dur % 60);
+                const durStr = dur ? mins + ':' + (secs < 10 ? '0' : '') + secs : '0:00';
+                content = `[语音 ${durStr}]`;
+            }
         } else if (msgType === 'file' || (msg.media_url && msgType !== 'text')) {
             const fileUrl = msg.media_url || '';
             const fileName = msg.body || fileUrl.split('/').pop();
@@ -753,27 +792,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>`;
             } else {
                 content = `[红包] ${escapeHtml(msg.body || '')}`;
-            }
-        } else if (msgType === 'voice') {
-            if (msg.media_url) {
-                content = `
-                    <div class="voice-message" data-url="${msg.media_url}">
-                        <div class="voice-top-row">
-                            <button class="voice-play-btn">▶</button>
-                            <div class="voice-wave" data-url="${msg.media_url}">
-                                <div class="voice-wave-bg" style="width:0%"></div>
-                                <div class="voice-wave-bars">${'<span></span>'.repeat(20)}</div>
-                            </div>
-                            <span class="voice-duration">0:00</span>
-                        </div>
-                        <audio preload="metadata" src="${msg.media_url}"></audio>
-                    </div>`;
-            } else {
-                const dur = (msg.duration_ms || 0) / 1000;
-                const mins = Math.floor(dur / 60);
-                const secs = Math.floor(dur % 60);
-                const durStr = dur ? mins + ':' + (secs < 10 ? '0' : '') + secs : '0:00';
-                content = `[语音 ${durStr}]`;
             }
         } else {
             content = `[${msgType}] ${escapeHtml(msg.body || '')}`;
@@ -1019,7 +1037,6 @@ document.addEventListener('DOMContentLoaded', () => {
         voiceMsg.querySelector('.voice-play-btn').textContent = '⏸';
         const wave = voiceMsg.querySelector('.voice-wave');
         if (wave) startVoiceVis(e.target, wave);
-        // 显示"正在播放"图标并记录当前消息
         currentlyPlayingVoiceMsg = voiceMsg;
         document.getElementById('nowPlayingBtn').style.display = '';
     }, true);
@@ -1031,7 +1048,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!voiceMsg) return;
         voiceMsg.querySelector('.voice-play-btn').textContent = '▶';
         stopVoiceVis();
-        // 无论是否暂停到底，都隐藏"正在播放"图标
         currentlyPlayingVoiceMsg = null;
         document.getElementById('nowPlayingBtn').style.display = 'none';
         // 播放结束后恢复显示总时长
@@ -1063,32 +1079,26 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('nowPlayingBtn').style.display = 'none';
     }, true);
 
-    // === 语音波形可视化（基于真实音频数据） ===
-    var voiceVisCtx = null;
-    var voiceVisCache = {};  // url → { data: Float32Array, sampleRate: number }
-    var voiceVis = { rafId: null, audio: null, bars: null };
-    var currentlyPlayingVoiceMsg = null;  // 当前正在播放的语音消息 DOM 元素
+    var currentlyPlayingVoiceMsg = null;
 
-    // 点击"正在播放"按钮 → 跳转到正在播放的消息
     document.getElementById('nowPlayingBtn').addEventListener('click', function() {
         if (currentlyPlayingVoiceMsg && currentlyPlayingVoiceMsg.isConnected) {
             currentlyPlayingVoiceMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     });
 
+    // === 语音波形动画（消息内） ===
+    var voiceVisCtx = null;
+    var voiceVisCache = {};
+    var voiceVis = { rafId: null, audio: null, bars: null };
+
     function stopVoiceVis() {
         if (voiceVis.rafId) { cancelAnimationFrame(voiceVis.rafId); voiceVis.rafId = null; }
         if (voiceVis.bars) {
             voiceVis.bars.forEach(function(b) { b.style.height = ''; b.style.opacity = ''; });
         }
-        if (voiceVis.bgBars) {
-            voiceVis.bgBars.forEach(function(b) { b.style.height = ''; b.style.opacity = ''; });
-        }
         voiceVis.audio = null;
         voiceVis.bars = null;
-        voiceVis.bgBars = null;
-        var bgEl = document.getElementById('voiceBgWave');
-        if (bgEl) bgEl.classList.remove('visible');
     }
 
     async function startVoiceVis(audio, wave) {
@@ -1122,24 +1132,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         voiceVis.audio = audio;
         voiceVis.bars = bars;
-        // 设置背景波浪线（Canvas）
-        var bgContainer = document.getElementById('voiceBgWave');
-        var bgBarsContainer = bgContainer ? bgContainer.querySelector('.voice-bg-wave-bars') : null;
-        if (bgBarsContainer) {
-            bgBarsContainer.innerHTML = '';
-            var canvas = document.createElement('canvas');
-            canvas.className = 'voice-bg-wave-canvas';
-            function resizeCanvas() {
-                canvas.width = window.innerWidth;
-                canvas.height = 320;
-            }
-            resizeCanvas();
-            window.addEventListener('resize', resizeCanvas);
-            bgBarsContainer.appendChild(canvas);
-            voiceVis.bgCanvas = canvas;
-            voiceVis.bgCtx = canvas.getContext('2d');
-            bgContainer.classList.add('visible');
-        }
         var totalSamples = pcm.length;
         var barCount = bars.length;
 
@@ -1153,7 +1145,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // 窗口：当前播放位置前后共 ~1.5 秒，增大范围避免长时间拉满
             var windowLen = Math.min(totalSamples, Math.floor(totalSamples * 1.5 / dur));
             var midSample = (ct / dur) * totalSamples;
             var startSample = Math.max(0, Math.floor(midSample - windowLen * 0.4));
@@ -1172,52 +1163,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     sum += Math.abs(pcm[s]);
                 }
                 var avg = sum / (sEnd - sStart);
-                // 语音信号放大，使波形明显
                 var val = Math.min(1, avg * 3);
                 val = Math.max(0.05, val);
                 bars[i].style.height = (val * 22) + 'px';
                 bars[i].style.opacity = Math.max(0.2, val * 0.8 + 0.2);
-            }
-
-            // 更新背景波形 — 单条连续波浪线
-            var bgCanvas = voiceVis.bgCanvas;
-            var bgCtx = voiceVis.bgCtx;
-            if (bgCanvas && bgCtx) {
-                var w = bgCanvas.width;
-                var h = bgCanvas.height;
-                bgCtx.clearRect(0, 0, w, h);
-
-                var numPoints = 100;
-                var halfH = h / 2;
-                var maxAmp = h * 0.38;
-
-                bgCtx.beginPath();
-                bgCtx.strokeStyle = 'rgba(0, 0, 0, 0.10)';
-                bgCtx.lineWidth = 4;
-                bgCtx.lineJoin = 'round';
-                bgCtx.lineCap = 'round';
-
-                for (var pi = 0; pi < numPoints; pi++) {
-                    // 从当前窗口均匀取样本点
-                    var t = pi / (numPoints - 1);
-                    var sampleIdx = Math.floor(startSample + t * (endSample - startSample));
-                    sampleIdx = Math.max(0, Math.min(totalSamples - 1, sampleIdx));
-                    // 取该点附近几个样本的平均值，使线条更平滑
-                    var sum2 = 0, cnt2 = 0;
-                    for (var ss = -2; ss <= 2; ss++) {
-                        var si = sampleIdx + ss;
-                        if (si >= 0 && si < totalSamples) {
-                            sum2 += pcm[si];
-                            cnt2++;
-                        }
-                    }
-                    var avgPcm = cnt2 > 0 ? sum2 / cnt2 : 0;
-                    var x = t * w;
-                    var y = halfH - avgPcm * maxAmp;
-                    if (pi === 0) bgCtx.moveTo(x, y);
-                    else bgCtx.lineTo(x, y);
-                }
-                bgCtx.stroke();
             }
 
             voiceVis.rafId = requestAnimationFrame(render);
@@ -1338,8 +1287,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (text) {
                 sendMessage(text);
                 this.value = '';
+                this.style.height = 'auto';
             }
         }
+    });
+
+    messageInput.addEventListener('input', function () {
+        this.style.height = 'auto';
+        const maxH = Math.floor(window.innerHeight * 0.35);
+        this.style.height = Math.min(this.scrollHeight, maxH) + 'px';
     });
 
     // 图片粘贴の上传判定
@@ -1369,6 +1325,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (text) {
             sendMessage(text);
             messageInput.value = '';
+            messageInput.style.height = 'auto';
         }
     });
 
@@ -1486,6 +1443,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // 优先显示消息菜单
         const msgDiv = e.target.closest('.message');
         if (msgDiv) {
+            const sel = window.getSelection();
+            const selectedText = sel && sel.toString() ? sel.toString() : '';
             e.preventDefault();
             const msgId = msgDiv.dataset.msgId;
             if (!msgId) return;
@@ -1505,20 +1464,18 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             menu.innerHTML = menuHtml;
             document.body.appendChild(menu);
+            requestAnimationFrame(() => menu.classList.add('show'));
             contextMenu = menu;
             contextMsgId = msgId;
     
             menu.addEventListener('click', (event) => {
                 const action = event.target.dataset.action;
                 if (action === 'copy') {
-                    const bubble = msgDiv.querySelector('.message-bubble');
-                    if (bubble) {
-                        const text = bubble.innerText;
-                        if (navigator.clipboard && navigator.clipboard.writeText) {
-                            navigator.clipboard.writeText(text).catch(() => fallbackCopy(bubble));
-                        } else {
-                            fallbackCopy(bubble);
-                        }
+                    const textToCopy = selectedText || msgDiv.querySelector('.message-bubble')?.innerText || '';
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(textToCopy).catch(() => fallbackCopyText(textToCopy));
+                    } else {
+                        fallbackCopyText(textToCopy);
                     }
                 } else if (action === 'copy-raw') {
                     const rawBody = msgDiv.dataset.rawBody || '';
@@ -1571,12 +1528,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="context-menu-item" data-action="refresh">刷新</div>
             `;
             document.body.appendChild(menu);
+            requestAnimationFrame(() => menu.classList.add('show'));
             contextMenu = menu;
     
             menu.addEventListener('click', (event) => {
                 const action = event.target.dataset.action;
                 if (action === 'refresh') {
-                    location.reload();
+                    if (currentConv) {
+                        const convKey = currentConv.key;
+                        switchConversation(currentConv.type, currentConv.id, currentConv.name);
+                        setTimeout(() => {
+                            const items = contactList.querySelectorAll('.contact-item');
+                            items.forEach(item => {
+                                if (item.dataset.convKey === convKey) {
+                                    item.classList.add('active');
+                                }
+                            });
+                        }, 0);
+                    }
                 }
                 hideContextMenu();
             });
@@ -1928,6 +1897,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (found) {
                     const name = found.name || (type === 'direct' ? found.uid : found.id);
                     switchConversation(type, id, name);
+                    const items = contactList.querySelectorAll('.contact-item');
+                    items.forEach(item => {
+                        const convKey2 = type + ':' + id;
+                        if (item.dataset.convKey === convKey2) {
+                            item.classList.add('active');
+                        }
+                    });
                 }
             }
         }
