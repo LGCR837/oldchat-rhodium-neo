@@ -309,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.setItem('lastConversation', convKey);
         } catch (e) {}
     
-        chatHeader.innerHTML = `<span>${escapeHtml(name)}</span>`;
+        chatHeader.querySelector('.chat-title').textContent = name;
         messagesContainer.innerHTML = '';
         lastRenderedMsg = null;
 
@@ -1390,7 +1390,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (isMobile()) {
-        sidebar.classList.add('collapsed');
+        sidebar.classList.remove('collapsed');
         sidebarPinned = false;
         expandChat();
     }

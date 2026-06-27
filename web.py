@@ -363,7 +363,7 @@ def init_web(app):
         <main class="chat-area">
             <div class="chat-header" id="chatHeader">
                 <button class="mobile-menu-btn" id="mobileMenuBtn"><i class="fa-solid fa-chevron-left"></i></button>
-                <span>OldChat for Kivotos</span>
+                <span class="chat-title">OldChat for Kivotos</span>
             </div>
             <div class="messages" id="messagesContainer"></div>
             <div class="input-area" id="inputArea">
