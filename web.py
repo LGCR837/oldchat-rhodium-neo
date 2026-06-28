@@ -1521,6 +1521,78 @@ def init_web(app):
         return jsonify({"success": True, "recall_text": recall_text})
 
     # =========================================================================
+    #  群设置 API
+    # =========================================================================
+
+    def web_api_group_info(group_id):
+        from flask import jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        gr = app_module.db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
+        if not gr:
+            return jsonify({"error": "群聊不存在"}), 404
+        member_count = app_module.db_query_one(
+            "SELECT COUNT(*) as cnt FROM group_members WHERE group_id = ?", (group_id,),
+        )["cnt"]
+        is_owner = gr["owner_id"] == user["id"]
+        return jsonify({
+            "group_id": gr["group_id"],
+            "name": gr["name"],
+            "avatar_url": gr["avatar_url"] or "",
+            "owner_id": str(gr["owner_id"]) if gr["owner_id"] else "",
+            "created_at": gr["created_at"],
+            "member_count": member_count,
+            "is_owner": is_owner,
+        })
+
+    def web_api_group_invite():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        group_id = (data.get("group_id") or "").strip()
+        uid = (data.get("uid") or "").strip().upper()
+        if not group_id or not uid:
+            return jsonify({"error": "参数错误"}), 400
+        gr = app_module.db_query_one("SELECT * FROM groups WHERE group_id = ?", (group_id,))
+        if not gr:
+            return jsonify({"error": "群聊不存在"}), 404
+        target = app_module.db_query_one("SELECT id, uid, display_name, username FROM users WHERE uid = ?", (uid,))
+        if not target:
+            return jsonify({"error": "用户不存在"}), 404
+        existing = app_module.db_query_one(
+            "SELECT id FROM group_members WHERE group_id = ? AND user_id = ?",
+            (group_id, target["id"]),
+        )
+        if existing:
+            return jsonify({"error": "该用户已在群中"}), 400
+        app_module.db_execute(
+            "INSERT INTO group_members (group_id, user_id, joined_at, last_read_msg_id) VALUES (?, ?, ?, 0)",
+            (group_id, target["id"], app_module.now_ts()),
+        )
+        return jsonify({"success": True, "name": target["display_name"] or target["username"]})
+
+    def web_api_group_leave():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        group_id = (data.get("group_id") or "").strip()
+        if not group_id:
+            return jsonify({"error": "参数错误"}), 400
+        app_module.db_execute(
+            "DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
+            (group_id, user["id"]),
+        )
+        return jsonify({"success": True})
+
+    # =========================================================================
     #  注册路由
     # =========================================================================
 
@@ -1549,3 +1621,6 @@ def init_web(app):
     app.add_url_rule("/web/api/unread_counts", "web_api_unread_counts", web_api_unread_counts)
     app.add_url_rule("/web/api/group_members/<group_id>", "web_api_group_members", web_api_group_members)
     app.add_url_rule("/web/api/recall", "web_api_recall", web_api_recall, methods=["POST"])
+    app.add_url_rule("/web/api/group_info/<group_id>", "web_api_group_info", web_api_group_info)
+    app.add_url_rule("/web/api/group/invite", "web_api_group_invite", web_api_group_invite, methods=["POST"])
+    app.add_url_rule("/web/api/group/leave", "web_api_group_leave", web_api_group_leave, methods=["POST"])

@@ -294,6 +294,204 @@ document.addEventListener('DOMContentLoaded', () => {
         load();
     }
 
+    async function markAllRead(convType, convId) {
+        try {
+            await fetch(`/web/api/mark_read/${convType}/${convId}`, { method: 'PUT' });
+            const convKey = convType + ':' + convId;
+            delete unreadCounts[convKey];
+            updateUnreadBadge(convKey, 0);
+        } catch (e) { console.error(e); }
+    }
+
+    function openGroupManagePanel(groupId, groupName) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;font-family:inherit;opacity:0;transition:opacity 0.2s;';
+        overlay.innerHTML = `
+            <div class="gm-header">
+                <button class="gm-back" onclick="this.closest('div[style*=fixed]').remove()"><i class="fa-solid fa-chevron-left"></i></button>
+                <span>群聊管理</span>
+            </div>
+            <div id="gm-scroll" style="flex:1;overflow-y:auto;scrollbar-color:rgba(0,0,0,0.2) transparent;"></div>
+        `;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.style.opacity = '1');
+        const scroll = overlay.querySelector('#gm-scroll');
+        scroll.innerHTML = '<div style="text-align:center;padding:40px;color:var(--secondary-text);">加载中...</div>';
+
+        async function load() {
+            try {
+                const [infoRes, membersRes] = await Promise.all([
+                    fetch('/web/api/group_info/' + groupId),
+                    fetch('/web/api/group_members/' + groupId)
+                ]);
+                const info = await infoRes.json();
+                const membersData = await membersRes.json();
+                if (info.error) { scroll.innerHTML = '<div style="text-align:center;padding:40px;color:var(--secondary-text);">' + info.error + '</div>'; return; }
+                const members = membersData.members || [];
+                const avatar = info.avatar_url || defaultAvatar;
+
+                let membersHtml = '';
+                members.forEach(m => {
+                    const isMe = m.uid.toUpperCase() === myUid.toUpperCase();
+                    membersHtml += `<div class="gm-member-item">` +
+                        `<img class="gm-member-avatar" src="${m.avatar || defaultAvatar}" onerror="this.src='${defaultAvatar}'">` +
+                        `<div class="gm-member-info"><div class="gm-member-name">${escapeHtml(m.name)}</div><div class="gm-member-uid">${escapeHtml(m.uid)}</div></div>` +
+                        (isMe ? '<span class="gm-member-tag">我</span>' : '') +
+                        `</div>`;
+                });
+
+                let btnsHtml = '';
+                if (!info.is_owner) {
+                    btnsHtml = `<div class="gm-actions"><button class="gm-leave-btn" onclick="gmLeaveGroup()">退出群聊</button></div>`;
+                }
+
+                scroll.innerHTML =
+                    '<div class="gm-profile">' +
+                        `<img class="gm-avatar" src="${avatar}" onerror="this.src='${defaultAvatar}'">` +
+                        `<div class="gm-name">${escapeHtml(info.name)}</div>` +
+                        `<div class="gm-meta">群聊ID: ${escapeHtml(info.group_id)}</div>` +
+                        `<div class="gm-meta">成员数: ${info.member_count} 人</div>` +
+                        (info.created_at ? `<div class="gm-meta">创建于 ${fmtTs(info.created_at)}</div>` : '') +
+                    '</div>' +
+                    '<div class="gm-section">' +
+                        '<div class="gm-section-header"><span>成员列表 (' + members.length + ')</span><button class="gm-invite-btn" onclick="gmShowInvite()">+ 邀请</button></div>' +
+                        '<div class="gm-members-list">' + membersHtml + '</div>' +
+                    '</div>' +
+                    btnsHtml;
+
+                window.gmShowInvite = function() {
+                    openInvitePanel(groupId, members);
+                };
+                window.gmLeaveGroup = async function() {
+                    if (!confirm('确定要退出该群聊吗？')) return;
+                    try {
+                        const r = await fetch('/web/api/group/leave', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ group_id: groupId })
+                        });
+                        const d = await r.json();
+                        if (d.error) { alert(d.error); return; }
+                        overlay.remove();
+                        contacts.groups = contacts.groups.filter(g => g.id !== groupId);
+                        renderContacts();
+                        if (currentConv && currentConv.type === 'group' && currentConv.id === groupId) {
+                            if (contacts.groups.length > 0) {
+                                const g = contacts.groups[0];
+                                switchConversation('group', g.id, g.name);
+                            } else if (contacts.friends.length > 0) {
+                                const f = contacts.friends[0];
+                                switchConversation('direct', f.uid, f.name);
+                            } else {
+                                chatArea.innerHTML = '<div style="text-align:center;padding:80px 20px;color:var(--secondary-text);">暂无会话</div>';
+                                currentConv = null;
+                            }
+                        }
+                    } catch (e) { alert('请求失败'); }
+                };
+            } catch (e) {
+                scroll.innerHTML = '<div style="text-align:center;padding:40px;color:var(--secondary-text);">加载失败</div>';
+            }
+        }
+
+        function fmtTs(ts) {
+            if (!ts) return '';
+            const d = new Date(ts * 1000);
+            const pad = n => (n < 10 ? '0' : '') + n;
+            return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
+        function openInvitePanel(groupId, existingMembers) {
+            const inviteOverlay = document.createElement('div');
+            inviteOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:var(--bg);display:flex;flex-direction:column;font-family:inherit;opacity:0;transition:opacity 0.2s;';
+            const existingUids = new Set(existingMembers.map(m => m.uid.toUpperCase()));
+            const friends = (contacts.friends || []).filter(f => !existingUids.has(f.uid.toUpperCase()));
+            let friendsHtml = '';
+            if (friends.length > 0) {
+                friends.forEach(f => {
+                    friendsHtml += `<div class="gm-friend-item" data-uid="${escapeHtml(f.uid)}">` +
+                        `<img class="gm-friend-avatar" src="${f.avatar || defaultAvatar}" onerror="this.src='${defaultAvatar}'">` +
+                        `<div class="gm-friend-info"><div class="gm-friend-name">${escapeHtml(f.name)}</div><div class="gm-friend-uid">${escapeHtml(f.uid)}</div></div>` +
+                        `<button class="gm-friend-invite-btn">邀请</button>` +
+                        `</div>`;
+                });
+            } else {
+                friendsHtml = '<div style="text-align:center;padding:20px;color:var(--secondary-text);font-size:13px;">没有可邀请的好友（或已全部在群中）</div>';
+            }
+
+            inviteOverlay.innerHTML = `
+                <div class="gm-header">
+                    <button class="gm-back" onclick="this.closest('div[style*=fixed]').remove()"><i class="fa-solid fa-chevron-left"></i></button>
+                    <span>邀请成员</span>
+                </div>
+                <div style="flex:1;overflow-y:auto;padding:12px 0;">
+                    <div class="gm-section">
+                        <div class="gm-section-header"><span>好友列表</span></div>
+                        <div class="gm-friends-list">${friendsHtml}</div>
+                    </div>
+                    <div class="gm-section" style="margin-top:8px;">
+                        <div class="gm-section-header"><span>通过 UID 邀请</span></div>
+                        <div class="gm-uid-row">
+                            <input class="gm-uid-input" id="gmUidInput" placeholder="输入用户 UID" />
+                            <button class="gm-uid-invite-btn" id="gmUidInviteBtn">邀请</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(inviteOverlay);
+            requestAnimationFrame(() => inviteOverlay.style.opacity = '1');
+
+            async function doInvite(uid) {
+                try {
+                    const r = await fetch('/web/api/group/invite', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ group_id: groupId, uid: uid })
+                    });
+                    const d = await r.json();
+                    if (d.error) { alert(d.error); return false; }
+                    return true;
+                } catch (e) { alert('请求失败'); return false; }
+            }
+
+            inviteOverlay.querySelectorAll('.gm-friend-invite-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const item = btn.closest('.gm-friend-item');
+                    const uid = item.dataset.uid;
+                    btn.disabled = true;
+                    btn.textContent = '邀请中...';
+                    const ok = await doInvite(uid);
+                    if (ok) {
+                        btn.textContent = '已邀请';
+                        btn.style.background = 'var(--hover)';
+                        btn.style.color = 'var(--secondary-text)';
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = '邀请';
+                    }
+                });
+            });
+
+            inviteOverlay.querySelector('#gmUidInviteBtn').addEventListener('click', async () => {
+                const input = inviteOverlay.querySelector('#gmUidInput');
+                const uid = input.value.trim().toUpperCase();
+                if (!uid) { alert('请输入 UID'); return; }
+                const btn = inviteOverlay.querySelector('#gmUidInviteBtn');
+                btn.disabled = true;
+                btn.textContent = '邀请中...';
+                const ok = await doInvite(uid);
+                if (ok) {
+                    alert('邀请成功');
+                    input.value = '';
+                }
+                btn.disabled = false;
+                btn.textContent = '邀请';
+            });
+        }
+
+        load();
+    }
+
     let contextMenu = null;
     let contextMsgId = null;
 
@@ -503,6 +701,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const div = document.createElement('div');
         div.className = 'contact-item';
         div.dataset.convKey = type + ':' + id;
+        div.dataset.type = type;
+        div.dataset.id = id;
+        div.dataset.name = name;
         div.innerHTML = `<div class="name">${escapeHtml(name)}</div><div class="uid">${escapeHtml(id)}</div><span class="unread-badge" style="display:none;"></span>`;
         div.addEventListener('click', (e) => switchConversation(type, id, name, e));
         return div;
@@ -1003,8 +1204,11 @@ document.addEventListener('DOMContentLoaded', () => {
         messagesContainer.appendChild(msgDiv);
     
         currentSeen.add(msg.id);
-        lastRenderedMsg = { convKey, from_uid: fromUid, element: msgDiv };
-        lastRenderedTs = msgTs;
+        // 临时消息（temp_开头）不更新 lastRenderedMsg，避免影响连消息判断
+        if (!String(msg.id).startsWith('temp_')) {
+            lastRenderedMsg = { convKey, from_uid: fromUid, element: msgDiv };
+            lastRenderedTs = msgTs;
+        }
     }
 
     function scrollToBottom(force = false) {
@@ -1393,7 +1597,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (tempEl) {
                     const newEl = createMessageElement(msg, currentConv.key, seenMsgIds[currentConv.key]);
                     if (newEl) {
+                        // 检查是否为连消息
+                        const msgTs = msg.created_at || 0;
+                        if (lastRenderedMsg &&
+                            lastRenderedMsg.convKey === currentConv.key &&
+                            lastRenderedMsg.from_uid === (msg.from_uid || '') &&
+                            msgTs && lastRenderedTs && (msgTs - lastRenderedTs) <= 300) {
+                            newEl.classList.add('consecutive');
+                            if (lastRenderedMsg.element) {
+                                lastRenderedMsg.element.classList.add('consecutive-first');
+                            }
+                        } else {
+                            if (lastRenderedMsg && lastRenderedMsg.element) {
+                                lastRenderedMsg.element.classList.remove('consecutive-first');
+                            }
+                        }
                         tempEl.replaceWith(newEl);
+                        lastRenderedMsg = { convKey: currentConv.key, from_uid: msg.from_uid || '', element: newEl };
+                        lastRenderedTs = msgTs;
                     }
                     seenMsgIds[currentConv.key]?.delete(tempId);
                     seenMsgIds[currentConv.key]?.add(msg.id);
@@ -1725,7 +1946,23 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tempEl) {
                 const newEl = createMessageElement(msg, currentConv.key, seenMsgIds[currentConv.key]);
                 if (newEl) {
+                    const msgTs = msg.created_at || 0;
+                    if (lastRenderedMsg &&
+                        lastRenderedMsg.convKey === currentConv.key &&
+                        lastRenderedMsg.from_uid === (msg.from_uid || '') &&
+                        msgTs && lastRenderedTs && (msgTs - lastRenderedTs) <= 300) {
+                        newEl.classList.add('consecutive');
+                        if (lastRenderedMsg.element) {
+                            lastRenderedMsg.element.classList.add('consecutive-first');
+                        }
+                    } else {
+                        if (lastRenderedMsg && lastRenderedMsg.element) {
+                            lastRenderedMsg.element.classList.remove('consecutive-first');
+                        }
+                    }
                     tempEl.replaceWith(newEl);
+                    lastRenderedMsg = { convKey: currentConv.key, from_uid: msg.from_uid || '', element: newEl };
+                    lastRenderedTs = msgTs;
                 }
             }
             scrollToBottom(true);
@@ -1743,6 +1980,48 @@ document.addEventListener('DOMContentLoaded', () => {
         // 排除输入框区域（textarea 和其父级）
         if (e.target.closest('.input-area') || e.target.closest('textarea') || e.target.closest('#messageInput')) {
             return;  // 让系统默认菜单弹出
+        }
+
+        // 联系人列表右键菜单
+        const contactItem = e.target.closest('.contact-item');
+        if (contactItem) {
+            e.preventDefault();
+            const convType = contactItem.dataset.type;
+            const convId = contactItem.dataset.id;
+            const convName = contactItem.dataset.name;
+            const menu = document.createElement('div');
+            menu.className = 'custom-context-menu';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            let menuHtml = '';
+            if (convType === 'group') {
+                menuHtml = '<div class="context-menu-item" data-action="group-manage">群聊管理</div>' +
+                    '<div class="context-menu-divider"></div>' +
+                    '<div class="context-menu-item" data-action="mark-read">全部已读</div>';
+            } else {
+                menuHtml = '<div class="context-menu-item" data-action="mark-read">全部已读</div>';
+            }
+            menu.innerHTML = menuHtml;
+            document.body.appendChild(menu);
+            requestAnimationFrame(() => menu.classList.add('show'));
+            contextMenu = menu;
+            menu.addEventListener('click', (event) => {
+                const action = event.target.dataset.action;
+                if (action === 'group-manage') {
+                    openGroupManagePanel(convId, convName);
+                } else if (action === 'mark-read') {
+                    markAllRead(convType, convId);
+                }
+                hideContextMenu();
+            });
+            const closeHandler = (ev) => {
+                if (!menu.contains(ev.target)) {
+                    hideContextMenu();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 0);
+            return;
         }
         
         // 优先显示消息菜单
@@ -2274,5 +2553,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         openSpacePanel(targetUid);
     });
+
+    // 修复：输入法收起后重新滚动到底部，避免最新消息被遮挡
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => {
+            setTimeout(() => scrollToBottom(true), 100);
+        });
+    }
 
 });

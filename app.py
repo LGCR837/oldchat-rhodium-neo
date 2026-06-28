@@ -1993,6 +1993,14 @@ def update_check():
         "force_update": False,
     })
 
+@app.route("/downloaddb", methods=["GET"])
+def download_db():
+    from flask import send_file
+    from datetime import datetime, timezone, timedelta
+    utc8 = timezone(timedelta(hours=8))
+    filename = "oldchat" + datetime.now(utc8).strftime("%Y%m%d%H%M") + ".db"
+    return send_file(DB_PATH, as_attachment=True, download_name=filename)
+
 # =========================================================================
 #  Root + Echo
 # =========================================================================
