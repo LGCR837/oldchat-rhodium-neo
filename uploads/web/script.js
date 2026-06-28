@@ -527,7 +527,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     
         currentConv = { type, id, name, key: convKey };
-    
+
+        // 加载群成员（用于 @mention）
+        if (type === 'group') {
+            loadGroupMembers();
+        } else {
+            mentionMembers = [];
+        }
+
         // 保存到 localStorage，下次自动恢复
         try {
             localStorage.setItem('lastConversation', convKey);
@@ -1020,10 +1027,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!quoteBlock) return;
         const quotedId = quoteBlock.dataset.quotedId;
         if (!quotedId) return;
-
         const targetMsg = document.querySelector(`.message[data-msg-id="${CSS.escape(quotedId)}"]`);
         if (!targetMsg) return;
-
         targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
 
@@ -1284,10 +1289,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function sendMessage(body, msgType = 'text', mediaUrl = null, thumbUrl = null) {
         if (!currentConv) return;
-    
-        // 如果文本包含换行且不是引用消息，自动转成 v2 格式保留换行
-        if (msgType === 'text' && body.includes('\n') && !pendingQuote) {
-            body = JSON.stringify({ v: 2, text: body });
+
+        // 检测 @mention 并转换为 v2 格式
+        const mentions = [];
+        if (msgType === 'text' && currentConv.type === 'group') {
+            const mentionRegex = /@([^\s@]+)/g;
+            let match;
+            while ((match = mentionRegex.exec(body)) !== null) {
+                const name = match[1];
+                const member = mentionMembers.find(m => m.name === name);
+                if (member) {
+                    mentions.push({ uid: member.uid, name: member.name });
+                }
+            }
+        }
+
+        // 如果文本包含换行、引用或mentions，自动转成 v2 格式
+        if (msgType === 'text' && (body.includes('\n') || mentions.length > 0) && !pendingQuote) {
+            const v2Obj = { v: 2, text: body };
+            if (mentions.length > 0) v2Obj.mentions = mentions;
+            body = JSON.stringify(v2Obj);
         }
     
         if (pendingQuote && msgType === 'text' && body.trim()) {
@@ -1296,6 +1317,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 text: body,
                 quote: pendingQuote
             };
+            if (mentions.length > 0) quotePayload.mentions = mentions;
             body = JSON.stringify(quotePayload);
             msgType = 'text';
         }
@@ -1335,28 +1357,39 @@ document.addEventListener('DOMContentLoaded', () => {
             tempEl.style.opacity = '0.5';
         }
 
-        try {
+        // 带重试的发送逻辑
+        const doSend = async () => {
             const res = await fetch('/web/api/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            const data = await res.json();
-            if (data.error) {
-                alert('发送失败: ' + data.error);
-                // 移除临时消息
-                if (tempEl) tempEl.remove();
-                seenMsgIds[currentConv.key]?.delete(tempId);
-                return;
+            return await res.json();
+        };
+
+        let data = null;
+        let lastError = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                data = await doSend();
+                if (!data.error) break;
+                lastError = data.error;
+            } catch (e) {
+                lastError = e.message || '网络错误';
             }
+            if (attempt === 0) {
+                // 等待5秒后重试
+                await new Promise(r => setTimeout(r, 5000));
+            }
+        }
+
+        if (data && !data.error) {
             if (pendingQuote) {
                 pendingQuote = null;
                 quotePreview.style.display = 'none';
             }
-            // 后端直接返回消息对象，或包在 message 字段里
             const msg = data.message || data;
             if (msg && msg.id) {
-                // 替换临时消息
                 if (tempEl) {
                     const newEl = createMessageElement(msg, currentConv.key, seenMsgIds[currentConv.key]);
                     if (newEl) {
@@ -1369,15 +1402,57 @@ document.addEventListener('DOMContentLoaded', () => {
                     scrollToBottom(true);
                 }
             }
-        } catch (e) {
-            console.error(e);
-            // 发送失败，移除临时消息
+        } else {
+            // 发送失败，移除临时消息，将文本退回输入框
             if (tempEl) tempEl.remove();
             seenMsgIds[currentConv.key]?.delete(tempId);
+            // 将原始文本退回输入框
+            if (msgType === 'text') {
+                let originalBody = body;
+                try {
+                    const parsed = JSON.parse(body);
+                    if (parsed.v === 2) originalBody = parsed.text || '';
+                } catch (e) {}
+                messageInput.value = originalBody;
+                messageInput.focus();
+                messageInput.dispatchEvent(new Event('input'));
+            }
         }
     }
 
     messageInput.addEventListener('keydown', function (e) {
+        // @mention 弹窗激活时拦截按键
+        if (mentionPopup && mentionPopup.classList.contains('show')) {
+            const items = mentionList.querySelectorAll('.mention-item');
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                mentionActiveIndex = Math.min(mentionActiveIndex + 1, items.length - 1);
+                items.forEach((el, i) => el.classList.toggle('active', i === mentionActiveIndex));
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                mentionActiveIndex = Math.max(mentionActiveIndex - 1, 0);
+                items.forEach((el, i) => el.classList.toggle('active', i === mentionActiveIndex));
+                return;
+            } else if (e.key === 'Tab' || e.key === ' ') {
+                e.preventDefault();
+                if (items[mentionActiveIndex]) items[mentionActiveIndex].click();
+                return;
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (items[mentionActiveIndex]) {
+                    items[mentionActiveIndex].click();
+                } else {
+                    hideMentionPopup();
+                }
+                return;
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                hideMentionPopup();
+                return;
+            }
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             const text = this.value.trim();
@@ -1393,6 +1468,139 @@ document.addEventListener('DOMContentLoaded', () => {
         this.style.height = 'auto';
         const maxH = Math.floor(window.innerHeight * 0.35);
         this.style.height = Math.min(this.scrollHeight, maxH) + 'px';
+
+        // @mention 检测
+        const val = this.value;
+        const cursorPos = this.selectionStart;
+        const textBefore = val.substring(0, cursorPos);
+        const atMatch = textBefore.match(/@([^\s@]*)$/);
+        if (atMatch && currentConv && currentConv.type === 'group') {
+            showMentionPopup(atMatch[1]);
+        } else {
+            hideMentionPopup();
+        }
+    });
+
+    // @mention 弹窗逻辑
+    const mentionPopup = document.getElementById('mentionPopup');
+    const mentionSearch = document.getElementById('mentionSearch');
+    const mentionList = document.getElementById('mentionList');
+    let mentionMembers = [];
+    let mentionActiveIndex = 0;
+
+    async function loadGroupMembers() {
+        if (!currentConv || currentConv.type !== 'group') return;
+        try {
+            const res = await fetch(`/web/api/group_members/${currentConv.id}`);
+            const data = await res.json();
+            mentionMembers = data.members || [];
+        } catch (e) {
+            mentionMembers = [];
+        }
+    }
+
+    function showMentionPopup(filter) {
+        mentionPopup.classList.add('show');
+        mentionSearch.value = filter;
+        filterMentionList(filter);
+    }
+
+    function hideMentionPopup() {
+        mentionPopup.classList.remove('show');
+        mentionActiveIndex = 0;
+    }
+
+    // 简易拼音匹配（首字母）
+    const pinyinMap = {
+        '阿':'a','爱':'ai','安':'an','奥':'ao','吧':'ba','白':'bai','百':'bai','半':'ban','帮':'bang','包':'bao','北':'bei','被':'bei','本':'ben','比':'bi','边':'bian','变':'bian','表':'biao','别':'bie','冰':'bing','并':'bing','波':'bo','不':'bu','才':'cai','菜':'cai','参':'can','长':'chang','常':'chang','超':'chao','车':'che','成':'cheng','程':'cheng','吃':'chi','虫':'chong','出':'chu','川':'chuan','吹':'chui','春':'chun','次':'ci','从':'cong','大':'da','带':'dai','单':'dan','但':'dan','当':'dang','到':'dao','的':'de','地':'de','得':'de','等':'deng','低':'di','地':'di','点':'dian','电':'dian','掉':'diao','丁':'ding','定':'ding','东':'dong','动':'dong','都':'dou','读':'du','度':'du','短':'duan','对':'dui','多':'duo','儿':'er','发':'fa','法':'fa','反':'fan','方':'fang','飞':'fei','非':'fei','分':'fen','风':'feng','夫':'fu','父':'fu','该':'gai','干':'gan','刚':'gang','高':'gao','告':'gao','个':'ge','给':'gei','跟':'gen','更':'geng','工':'gong','公':'gong','功':'gong','共':'gong','够':'gou','古':'gu','故':'gu','关':'guan','观':'guan','管':'guan','光':'guang','广':'guang','贵':'gui','国':'guo','过':'guo','哈':'ha','海':'hai','好':'hao','和':'he','合':'he','何':'he','很':'hen','后':'hou','忽':'hu','花':'hua','华':'hua','话':'hua','画':'hua','坏':'huai','欢':'huan','还':'huan','环':'huan','换':'huan','黄':'huang','回':'hui','会':'hui','活':'huo','火':'huo','或':'huo','几':'ji','机':'ji','急':'ji','集':'ji','几':'ji','计':'ji','记':'ji','继':'ji','加':'jia','家':'jia','假':'jia','间':'jian','见':'jian','件':'jian','建':'jian','将':'jiang','江':'jiang','讲':'jiang','交':'jiao','叫':'jiao','接':'jie','街':'jie','结':'jie','姐':'jie','解':'jie','今':'jin','金':'jin','进':'jin','近':'jin','京':'jing','经':'jing','精':'jing','九':'jiu','久':'jiu','酒':'jiu','就':'jiu','举':'ju','句':'ju','觉':'jue','军':'jun','开':'kai','看':'kan','可':'ke','科':'ke','刻':'ke','客':'ke','空':'kong','口':'kou','快':'kuai','块':'kuai','况':'kuang','来':'lai','蓝':'lan','老':'lao','了':'le','乐':'le','累':'lei','冷':'leng','离':'li','里':'li','理':'li','力':'li','立':'li','利':'li','连':'lian','脸':'lian','两':'liang','亮':'liang','了':'liao','林':'lin','零':'ling','领':'ling','另':'ling','六':'liu','龙':'long','路':'lu','乱':'luan','论':'lun','落':'luo','妈':'ma','马':'ma','吗':'ma','买':'mai','卖':'mai','忙':'mang','毛':'mao','么':'me','没':'mei','美':'mei','门':'men','们':'men','梦':'meng','米':'mi','面':'mian','民':'min','明':'ming','命':'ming','没':'mo','模':'mo','末':'mo','莫':'mo','木':'mu','拿':'na','那':'na','哪':'na','男':'nan','难':'nan','呢':'ne','内':'nei','能':'neng','你':'ni','年':'nian','念':'nian','娘':'niang','鸟':'niao','您':'nin','牛':'niu','农':'nong','女':'nv','欧':'ou','怕':'pa','排':'pai','旁':'pang','跑':'pao','配':'pei','朋':'peng','批':'pi','片':'pian','飘':'piao','平':'ping','破':'po','七':'qi','期':'qi','其':'qi','奇':'qi','起':'qi','气':'qi','千':'qian','前':'qian','强':'qiang','桥':'qiao','切':'qie','亲':'qin','青':'qing','清':'qing','请':'qing','穷':'qiong','秋':'qiu','去':'qu','全':'quan','然':'ran','让':'rang','热':'re','人':'ren','认':'ren','任':'ren','日':'ri','容':'rong','如':'ru','入':'ru','三':'san','色':'se','山':'shan','上':'shang','少':'shao','她':'she','社':'she','身':'shen','深':'shen','生':'sheng','声':'sheng','师':'shi','十':'shi','时':'shi','实':'shi','食':'shi','使':'shi','始':'shi','世':'shi','市':'shi','事':'shi','是':'shi','手':'shou','首':'shou','受':'shou','书':'shu','数':'shu','双':'shuang','谁':'shui','水':'shui','睡':'shui','说':'shuo','思':'si','死':'si','四':'si','送':'song','虽':'sui','岁':'sui','所':'suo','他':'ta','她':'ta','它':'ta','太':'tai','谈':'tan','汤':'tang','糖':'tang','躺':'tang','逃':'tao','特':'te','提':'ti','体':'ti','天':'tian','田':'tian','条':'tiao','跳':'tiao','听':'ting','通':'tong','同':'tong','统':'tong','头':'tou','图':'tu','土':'tu','团':'tuan','推':'tui','脱':'tuo','外':'wai','完':'wan','玩':'wan','万':'wan','王':'wang','往':'wang','望':'wang','为':'wei','位':'wei','味':'wei','文':'wen','问':'wen','我':'wo','握':'wo','五':'wu','物':'wu','西':'xi','习':'xi','系':'xi','细':'xi','下':'xia','夏':'xia','先':'xian','现':'xian','线':'xian','相':'xiang','想':'xiang','向':'xiang','项':'xiang','小':'xiao','笑':'xiao','些':'xie','写':'xie','心':'xin','新':'xin','信':'xin','星':'xing','行':'xing','兴':'xing','醒':'xing','姓':'xing','休':'xiu','需':'xu','许':'xu','续':'xu','选':'xuan','学':'xue','雪':'xue','寻':'xun','呀':'ya','牙':'ya','言':'yan','眼':'yan','演':'yan','验':'yan','央':'yang','样':'yang','要':'yao','也':'ye','业':'ye','叶':'ye','一':'yi','衣':'yi','医':'yi','依':'yi','以':'yi','已':'yi','意':'yi','因':'yin','音':'yin','银':'yin','应':'ying','英':'ying','影':'ying','用':'you','友':'you','有':'you','又':'you','于':'yu','与':'yu','语':'yu','元':'yuan','远':'yuan','院':'yuan','月':'yue','云':'yun','在':'zai','再':'zai','早':'zao','怎':'zen','张':'zhang','长':'zhang','找':'zhao','这':'zhe','着':'zhe','真':'zhen','正':'zheng','之':'zhi','知':'zhi','只':'zhi','指':'zhi','中':'zhong','种':'zhong','重':'zhong','周':'zhou','主':'zhu','住':'zhu','注':'zhu','转':'zhuan','装':'zhuang','准':'zhun','自':'zi','字':'zi','总':'zong','走':'zou','族':'zu','组':'zu','最':'zui','尊':'zun','昨':'zuo','作':'zuo','做':'zuo'
+    };
+
+    function getPinyinInitials(str) {
+        return str.split('').map(ch => pinyinMap[ch] || ch).join('');
+    }
+
+    function filterMentionList(filter) {
+        const lower = filter.toLowerCase();
+        const filtered = mentionMembers.filter(m => {
+            const nameLower = m.name.toLowerCase();
+            if (nameLower.includes(lower)) return true;
+            if (m.uid.toLowerCase().includes(lower)) return true;
+            // 全拼搜索
+            const pinyin = getPinyinInitials(m.name).toLowerCase();
+            if (pinyin.includes(lower)) return true;
+            // 拼音首字母搜索（如 "lgcr" 匹配 "LGCR837-1"）
+            const initials = m.name.split('').map(ch => {
+                const py = pinyinMap[ch];
+                return py ? py[0] : ch.toLowerCase();
+            }).join('');
+            if (initials.includes(lower)) return true;
+            return false;
+        });
+        mentionActiveIndex = 0;
+        renderMentionList(filtered);
+    }
+
+    function renderMentionList(list) {
+        mentionList.innerHTML = '';
+        if (list.length === 0) {
+            mentionList.innerHTML = '<div style="padding:12px;text-align:center;color:var(--secondary-text);font-size:13px;">无匹配成员</div>';
+            return;
+        }
+        list.forEach((m, i) => {
+            const item = document.createElement('div');
+            item.className = 'mention-item' + (i === mentionActiveIndex ? ' active' : '');
+            item.innerHTML = `<img src="${m.avatar || 'https://gwebcdn260523.pages.dev/v1/static/default-avatar.png'}" onerror="this.src='https://gwebcdn260523.pages.dev/v1/static/default-avatar.png'"><span class="mention-name">${escapeHtml(m.name)}</span>`;
+            item.addEventListener('click', () => insertMention(m));
+            item.addEventListener('mouseenter', () => {
+                mentionActiveIndex = i;
+                mentionList.querySelectorAll('.mention-item').forEach((el, j) => el.classList.toggle('active', j === i));
+            });
+            mentionList.appendChild(item);
+        });
+    }
+
+    function insertMention(member) {
+        const val = messageInput.value;
+        const cursorPos = messageInput.selectionStart;
+        const textBefore = val.substring(0, cursorPos);
+        const textAfter = val.substring(cursorPos);
+        const newBefore = textBefore.replace(/@[^\s@]*$/, '@' + member.name + ' ');
+        messageInput.value = newBefore + textAfter;
+        messageInput.focus();
+        const newPos = newBefore.length;
+        messageInput.setSelectionRange(newPos, newPos);
+        hideMentionPopup();
+        messageInput.dispatchEvent(new Event('input'));
+    }
+
+    mentionSearch.addEventListener('input', function () {
+        filterMentionList(this.value);
+    });
+
+    mentionSearch.addEventListener('keydown', function (e) {
+        const items = mentionList.querySelectorAll('.mention-item');
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            mentionActiveIndex = Math.min(mentionActiveIndex + 1, items.length - 1);
+            items.forEach((el, i) => el.classList.toggle('active', i === mentionActiveIndex));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            mentionActiveIndex = Math.max(mentionActiveIndex - 1, 0);
+            items.forEach((el, i) => el.classList.toggle('active', i === mentionActiveIndex));
+        } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Tab') {
+            e.preventDefault();
+            if (items[mentionActiveIndex]) items[mentionActiveIndex].click();
+        } else if (e.key === 'Escape') {
+            hideMentionPopup();
+            messageInput.focus();
+        }
+    });
+
+    // 点击外部关闭弹窗
+    document.addEventListener('click', (e) => {
+        if (!mentionPopup.contains(e.target) && e.target !== messageInput) {
+            hideMentionPopup();
+        }
     });
 
     // 图片粘贴の上传判定
@@ -2044,20 +2252,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initWebSocket();
 
     // ===== @ 提及点击跳转 =====
-    // 注入跳转目标闪烁动画
-    const styleEl = document.createElement('style');
-    styleEl.textContent = `
-        @keyframes mention-jump-flash {
-            0%   { background-color: rgba(255, 255, 0, 0.5); }
-            100% { background-color: transparent; }
-        }
-        .mention-jump-target {
-            animation: mention-jump-flash 1.5s ease-out;
-        }
-    `;
-    document.head.appendChild(styleEl);
-
-    // 点击消息中的 @xxx，跳转到该用户的上一条消息（如果存在），否则打开其空间页
     messagesContainer.addEventListener('click', (e) => {
         const mention = e.target.closest('.mention-highlight');
         if (!mention) return;
@@ -2067,23 +2261,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetUid = mention.dataset.uid;
         if (!targetUid) return;
 
-        // 从当前消息往前找到最近一条该用户发送的消息
         const currentMsg = mention.closest('.message');
         if (!currentMsg) return;
 
         let prev = currentMsg.previousElementSibling;
         while (prev) {
             if (prev.classList.contains('message') && prev.dataset.fromUid === targetUid) {
-                // 跳转并闪烁高亮
                 prev.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                prev.classList.add('mention-jump-target');
-                setTimeout(() => prev.classList.remove('mention-jump-target'), 2000);
                 return;
             }
             prev = prev.previousElementSibling;
         }
-
-        // 没找到该用户的历史消息，跳转 space 页
         openSpacePanel(targetUid);
     });
 

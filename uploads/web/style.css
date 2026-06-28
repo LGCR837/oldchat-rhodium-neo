@@ -89,7 +89,7 @@ body::-webkit-scrollbar {
 	background: var(--sidebar-bg);
 	display: flex;
 	flex-direction: column;
-	transition: transform 0.3s ease;
+	transition: transform 0.3s ease, background-color 0.3s ease;
 	z-index: 10
 }
 
@@ -108,11 +108,13 @@ body::-webkit-scrollbar {
 	position: relative;
 	z-index: 1;
 	box-sizing: border-box;
+	transition: background-color 0.3s ease;
 }
 
 .sidebar-header .user-info,
 .sidebar-header .icon-btn {
 	color: #ffffff;
+	transition: color 0.3s ease, background-color 0.3s ease;
 }
 
 .sidebar-header .icon-btn:hover {
@@ -176,6 +178,7 @@ body::-webkit-scrollbar {
 	scrollbar-width: thin;
 	scrollbar-color: var(--scrollbar-thumb) transparent;
 	box-shadow: 2px 0 6px rgba(0,0,0,0.04);
+	transition: background-color 0.3s ease;
 }
 
 .contact-list::-webkit-scrollbar {
@@ -221,7 +224,7 @@ body::-webkit-scrollbar {
 .contact-item {
 	display: flex;
 	align-items: center;
-	padding: 15px 15px;
+	padding: 18px 15px;
 	cursor: pointer;
 	transition: background 0.2s;
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
@@ -263,6 +266,7 @@ body::-webkit-scrollbar {
 	margin-left: 280px;
 	transition: margin-left 0.3s ease;
     min-width: 0;
+    min-height: 0;
     overflow: hidden;
 }
 
@@ -300,6 +304,7 @@ body::-webkit-scrollbar {
 .messages {
 	flex: 1;
 	overflow-y: auto;
+	min-height: 0;
 	padding: 20px;
 	display: flex;
 	flex-direction: column;
@@ -596,6 +601,7 @@ body::-webkit-scrollbar {
 	padding: 10px;
 	background: var(--sidebar-bg);
 	box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
+	flex-shrink: 0;
 }
 
 .input-area textarea {
@@ -813,14 +819,20 @@ body::-webkit-scrollbar {
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif
 }
 
-.mention-highlight:hover {
-	text-decoration: underline
+.message.self .mention-highlight {
+	color: #b8daff;
 }
 
-.message-bubble img,.message-bubble video {
-	max-width: 200px;
-	max-height: 200px;
-	border-radius: 4px
+.message.other .mention-highlight {
+	color: #0078d4;
+}
+
+.message.self .mention-highlight:hover {
+	color: #ffffff;
+}
+
+.message.other .mention-highlight:hover {
+	color: #5ba3e6;
 }
 
 .message.other .quote-block {
@@ -828,7 +840,7 @@ body::-webkit-scrollbar {
 }
 
 .message.self .quote-block {
-	border-left: 3px solid #64b5f6
+	border-left: 3px solid #b8daff
 }
 
 .message.other .message-bubble a {
@@ -1195,6 +1207,74 @@ body::-webkit-scrollbar {
 	color: #0078d4
 }
 
+.mention-popup {
+	position: absolute;
+	bottom: 100%;
+	left: 0;
+	right: 0;
+	max-height: 300px;
+	background: var(--chat-bg);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	overflow: hidden;
+	box-shadow: 0 -4px 12px rgba(0,0,0,0.1);
+	z-index: 100;
+	display: none;
+}
+
+.mention-popup.show {
+	display: block;
+}
+
+.mention-search {
+	width: 100%;
+	padding: 10px 12px;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	background: var(--chat-bg);
+	color: var(--text);
+	font-size: 14px;
+	font-family: inherit;
+	outline: none;
+}
+
+.mention-list {
+	max-height: 250px;
+	overflow-y: auto;
+}
+
+.mention-item {
+	display: flex;
+	align-items: center;
+	padding: 10px 12px;
+	cursor: pointer;
+	gap: 10px;
+	transition: background 0.2s;
+}
+
+.mention-item:hover,
+.mention-item.active {
+	background: var(--hover);
+}
+
+.mention-item img {
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	object-fit: cover;
+	background: var(--border);
+}
+
+.mention-item .mention-name {
+	flex: 1;
+	font-size: 14px;
+	color: var(--text);
+}
+
+.input-area {
+	position: relative;
+}
+
 .btn:active,.contact-item:active,.context-menu-item:active,.emoticon-item:active,.file-download-btn:active,.icon-btn:active,.more-menu button:active,.quote-preview .icon-btn:active,.red-packet-card:active {
 	transform: scale(0.98)
 }
@@ -1219,5 +1299,20 @@ body::-webkit-scrollbar {
 
     .input-area textarea {
         min-height: auto;
+    }
+
+    .chat-area {
+        min-height: 0;
+        height: 100%;
+    }
+
+    .messages {
+        min-height: 0;
+    }
+
+    .input-area {
+        flex-shrink: 0;
+        position: sticky;
+        bottom: 0;
     }
 }

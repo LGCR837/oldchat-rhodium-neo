@@ -375,6 +375,10 @@ def init_web(app):
             </div>
             <div class="messages" id="messagesContainer"></div>
             <div class="input-area" id="inputArea">
+                <div class="mention-popup" id="mentionPopup">
+                    <input type="text" class="mention-search" id="mentionSearch" placeholder="搜索成员...">
+                    <div class="mention-list" id="mentionList"></div>
+                </div>
                 <div class="quote-preview" id="quotePreview" style="display: none;">
                     <span class="quote-preview-text"></span>
                     <button id="cancelQuoteBtn" class="icon-btn" title="取消引用">✖</button>
@@ -1025,7 +1029,7 @@ def init_web(app):
             display: flex;
             flex-direction: column;
             align-items: center;
-            border-bottom: 1px solid var(--border);
+            box-shadow: 0 8px 24px -8px rgba(0,0,0,0.12);
         }
         .space-avatar {
             width: 80px;
@@ -1452,6 +1456,23 @@ def init_web(app):
         directs = {r["uid"]: r["cnt"] for r in dm_rows}
         return jsonify({"groups": groups, "directs": directs})
 
+    def web_api_group_members(group_id):
+        from flask import jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        rows = app_module.db_query_all(
+            """SELECT u.uid, u.display_name, u.username, u.avatar_url
+               FROM users u JOIN group_members gm ON gm.user_id = u.id
+               WHERE gm.group_id = ? ORDER BY gm.joined_at ASC""",
+            (group_id,),
+        )
+        return jsonify({"members": [
+            {"uid": r["uid"], "name": r["display_name"] or r["username"], "avatar": r["avatar_url"] or ""}
+            for r in rows
+        ]})
+
     def web_api_recall():
         from flask import request, jsonify
         import app as app_module
@@ -1526,4 +1547,5 @@ def init_web(app):
     app.add_url_rule("/web/api/space/add_friend", "web_api_space_add_friend", web_api_space_add_friend, methods=["POST"])
     app.add_url_rule("/web/api/space/respond_friend", "web_api_space_respond_friend", web_api_space_respond_friend, methods=["POST"])
     app.add_url_rule("/web/api/unread_counts", "web_api_unread_counts", web_api_unread_counts)
+    app.add_url_rule("/web/api/group_members/<group_id>", "web_api_group_members", web_api_group_members)
     app.add_url_rule("/web/api/recall", "web_api_recall", web_api_recall, methods=["POST"])
