@@ -1475,7 +1475,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (obj.mentions && Array.isArray(obj.mentions)) {
                             obj.mentions.forEach(m => {
                                 const name = m.name || m.uid;
-                                const regex = new RegExp(`@${escapeRegExp(name)}`, 'g');
+                                const regex = new RegExp(`@${escapeRegExp(name)}\u200B?`, 'g');
                                 displayText = displayText.replace(regex,
                                     `<span class="mention-highlight" data-uid="${escapeHtml(m.uid || '')}">@${escapeHtml(name)}</span>`);
                             });
@@ -1548,7 +1548,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (obj.mentions && Array.isArray(obj.mentions)) {
                             obj.mentions.forEach(m => {
                                 const name = m.name || m.uid;
-                                const regex = new RegExp(`@${escapeRegExp(name)}`, 'g');
+                                const regex = new RegExp(`@${escapeRegExp(name)}\u200B?`, 'g');
                                 textBody = textBody.replace(regex,
                                     `<span class="mention-highlight" data-uid="${escapeHtml(m.uid || '')}">@${escapeHtml(name)}</span>`);
                             });
@@ -2012,7 +2012,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // 检测 @mention 并转换为 v2 格式
         const mentions = [];
         if (msgType === 'text' && currentConv.type === 'group') {
-            const mentionRegex = /@([^\s@]+)/g;
+            const mentionRegex = /@([^\u200B@]+)/g;
             let match;
             while ((match = mentionRegex.exec(body)) !== null) {
                 const name = match[1];
@@ -2209,9 +2209,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const val = this.value;
         const cursorPos = this.selectionStart;
         const textBefore = val.substring(0, cursorPos);
-        const atMatch = textBefore.match(/@([^\s@]*)$/);
+        const atMatch = textBefore.match(/@([^\u200B@]*)$/);
         if (atMatch && currentConv && currentConv.type === 'group') {
-            showMentionPopup(atMatch[1]);
+            if (!mentionJustInserted) showMentionPopup(atMatch[1]);
         } else {
             hideMentionPopup();
         }
@@ -2295,18 +2295,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let mentionJustInserted = false;
     function insertMention(member) {
         const val = messageInput.value;
         const cursorPos = messageInput.selectionStart;
         const textBefore = val.substring(0, cursorPos);
         const textAfter = val.substring(cursorPos);
-        const newBefore = textBefore.replace(/@[^\s@]*$/, '@' + member.name + ' ');
+        const newBefore = textBefore.replace(/@[^\u200B@]*$/, '@' + member.name + '\u200B ');
         messageInput.value = newBefore + textAfter;
         messageInput.focus();
         const newPos = newBefore.length;
         messageInput.setSelectionRange(newPos, newPos);
         hideMentionPopup();
+        mentionJustInserted = true;
         messageInput.dispatchEvent(new Event('input'));
+        mentionJustInserted = false;
     }
 
     mentionSearch.addEventListener('input', function () {
