@@ -41,7 +41,7 @@ function openImageViewer(src) {
 	if (!overlay) {
 		overlay = document.createElement('div');
 		overlay.id = 'imageOverlay';
-		overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:none;justify-content:center;align-items:center;z-index:99999;opacity:0;transition:opacity 0.25s ease;cursor:grab;user-select:none;`;
+		overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:none;justify-content:center;align-items:center;z-index:99999;opacity:0;transition:opacity 0.25s ease;cursor:grab;user-select:none;touch-action:none;`;
 		img = document.createElement('img');
 		img.id = 'imageOverlayImg';
 		img.style.cssText = `max-width:90%;max-height:90%;object-fit:contain;border-radius:4px;transform:scale(1)translate(0px,0px);transition:transform 0.2s ease;pointer-events:none;user-select:none;`;
@@ -63,6 +63,30 @@ function openImageViewer(src) {
 				overlay.removeEventListener('transitionend', handler)
 			})
 		}
+
+		function applyTransform() {
+			const s = img._scale || 1;
+			const tx = img._translateX || 0;
+			const ty = img._translateY || 0;
+			img.style.transform = `scale(${s})translate(${tx}px,${ty}px)`;
+		}
+
+		function clampTranslation() {
+			const s = img._scale || 1;
+			const rect = img.getBoundingClientRect();
+			const vw = window.innerWidth;
+			const vh = window.innerHeight;
+			let maxTx = 0, maxTy = 0;
+			if (rect.width * s > vw) {
+				maxTx = (rect.width * s - vw) / (2 * s);
+			}
+			if (rect.height * s > vh) {
+				maxTy = (rect.height * s - vh) / (2 * s);
+			}
+			img._translateX = Math.max(-maxTx, Math.min(maxTx, img._translateX));
+			img._translateY = Math.max(-maxTy, Math.min(maxTy, img._translateY));
+		}
+
 		overlay.addEventListener('click', function(e) {
 			if (hasDragged) {
 				hasDragged = false;
@@ -70,6 +94,8 @@ function openImageViewer(src) {
 			}
 			closeViewer()
 		});
+
+		// === PC: mouse drag ===
 		overlay.addEventListener('mousedown', function(e) {
 			e.preventDefault();
 			dragging = true;
@@ -102,18 +128,183 @@ function openImageViewer(src) {
 				img.style.transition = 'transform 0.2s ease'
 			}
 		});
+
+		// === PC: wheel zoom ===
 		overlay.addEventListener('wheel', function(e) {
 			e.preventDefault();
 			let scale = img._scale || 1;
 			const delta = e.deltaY > 0 ? -0.2 : 0.2;
 			scale = Math.min(5, Math.max(0.5, scale + delta));
 			img._scale = scale;
-			const tx = img._translateX || 0;
-			const ty = img._translateY || 0;
-			img.style.transform = `scale(${scale})translate(${tx}px,${ty}px)`
-		}, {
-			passive: false
-		})
+			clampTranslation();
+			applyTransform();
+		}, { passive: false });
+
+		// === Touch: pinch-to-zoom, pan, double-tap ===
+		let touchState = {
+			touching: false,
+			lastTap: 0,
+			pinchStartDist: 0,
+			pinchStartScale: 1,
+			panStartX: 0,
+			panStartY: 0,
+			imgStartPanX: 0,
+			imgStartPanY: 0,
+			fingerCount: 0,
+			hasMoved: false,
+		};
+
+		function getTouchDist(t1, t2) {
+			const dx = t1.clientX - t2.clientX;
+			const dy = t1.clientY - t2.clientY;
+			return Math.sqrt(dx * dx + dy * dy);
+		}
+
+		function getTouchCenter(t1, t2) {
+			return {
+				x: (t1.clientX + t2.clientX) / 2,
+				y: (t1.clientY + t2.clientY) / 2,
+			};
+		}
+
+		overlay.addEventListener('touchstart', function(e) {
+			const touches = e.touches;
+			touchState.touching = true;
+			touchState.fingerCount = touches.length;
+			touchState.hasMoved = false;
+
+			if (touches.length === 1) {
+				// Single finger: check double-tap
+				const now = Date.now();
+				const t = touches[0];
+				if (now - touchState.lastTap < 300) {
+					// Double tap: toggle zoom
+					e.preventDefault();
+					if (img._scale > 1.2) {
+						img._scale = 1;
+						img._translateX = 0;
+						img._translateY = 0;
+					} else {
+						img._scale = 2.5;
+						const rect = img.getBoundingClientRect();
+						const vw = window.innerWidth;
+						const vh = window.innerHeight;
+						img._translateX = (vw / 2 - t.clientX) / img._scale;
+						img._translateY = (vh / 2 - t.clientY) / img._scale;
+						clampTranslation();
+					}
+					img.style.transition = 'transform 0.3s ease';
+					applyTransform();
+					touchState.lastTap = 0;
+					return;
+				}
+				touchState.lastTap = now;
+
+				// Single finger pan
+				e.preventDefault();
+				img.style.transition = 'none';
+				touchState.panStartX = t.clientX;
+				touchState.panStartY = t.clientY;
+				touchState.imgStartPanX = img._translateX || 0;
+				touchState.imgStartPanY = img._translateY || 0;
+				hasDragged = false;
+			} else if (touches.length === 2) {
+				// Two fingers: pinch start
+				e.preventDefault();
+				img.style.transition = 'none';
+				touchState.pinchStartDist = getTouchDist(touches[0], touches[1]);
+				touchState.pinchStartScale = img._scale || 1;
+				touchState.imgStartPanX = img._translateX || 0;
+				touchState.imgStartPanY = img._translateY || 0;
+				const center = getTouchCenter(touches[0], touches[1]);
+				touchState.panStartX = center.x;
+				touchState.panStartY = center.y;
+				hasDragged = true;
+			}
+		}, { passive: false });
+
+		overlay.addEventListener('touchmove', function(e) {
+			if (!touchState.touching) return;
+			const touches = e.touches;
+
+			if (touches.length === 1 && touchState.fingerCount === 1) {
+				// Single finger pan
+				e.preventDefault();
+				const t = touches[0];
+				const dx = t.clientX - touchState.panStartX;
+				const dy = t.clientY - touchState.panStartY;
+				const scale = img._scale || 1;
+				img._translateX = touchState.imgStartPanX + dx / scale;
+				img._translateY = touchState.imgStartPanY + dy / scale;
+				clampTranslation();
+				applyTransform();
+				if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+					hasDragged = true;
+					touchState.hasMoved = true;
+				}
+			} else if (touches.length === 2) {
+				// Two finger pinch
+				e.preventDefault();
+				const dist = getTouchDist(touches[0], touches[1]);
+				const ratio = dist / touchState.pinchStartDist;
+				let newScale = touchState.pinchStartScale * ratio;
+				newScale = Math.min(5, Math.max(0.5, newScale));
+				img._scale = newScale;
+
+				const center = getTouchCenter(touches[0], touches[1]);
+				const dx = center.x - touchState.panStartX;
+				const dy = center.y - touchState.panStartY;
+				img._translateX = touchState.imgStartPanX + dx / newScale;
+				img._translateY = touchState.imgStartPanY + dy / newScale;
+				clampTranslation();
+				applyTransform();
+				hasDragged = true;
+				touchState.hasMoved = true;
+			}
+		}, { passive: false });
+
+		function touchEnd(e) {
+			if (e.touches.length === 0) {
+				const wasSingleFinger = touchState.fingerCount === 1;
+				const didNotMove = !touchState.hasMoved;
+				touchState.touching = false;
+				touchState.fingerCount = 0;
+				img.style.transition = 'transform 0.2s ease';
+
+				// Snap back if zoomed out past limits
+				if (img._scale < 1) {
+					img._scale = 1;
+					img._translateX = 0;
+					img._translateY = 0;
+					applyTransform();
+				}
+				if (img._scale > 5) {
+					img._scale = 5;
+					clampTranslation();
+					applyTransform();
+				}
+
+				// Single finger tap at 1x = close
+				if (wasSingleFinger && didNotMove && img._scale <= 1) {
+					hasDragged = false;
+					closeViewer();
+					return;
+				}
+				hasDragged = didNotMove ? false : true;
+			} else if (e.touches.length === 1) {
+				// Went from 2 fingers to 1: start pan from remaining finger
+				touchState.fingerCount = 1;
+				const t = e.touches[0];
+				touchState.panStartX = t.clientX;
+				touchState.panStartY = t.clientY;
+				touchState.imgStartPanX = img._translateX || 0;
+				touchState.imgStartPanY = img._translateY || 0;
+			}
+		}
+
+		overlay.addEventListener('touchend', touchEnd, { passive: false });
+		overlay.addEventListener('touchcancel', touchEnd, { passive: false });
+
 	} else {
 		img = document.getElementById('imageOverlayImg')
 	}
@@ -615,7 +806,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     '</div>' +
                     '<div class="mp-section">' +
                         '<div class="mp-section-header">添加好友</div>' +
-                        '<div class="mp-uid-row"><input class="mp-uid-input" id="mpAddFriendInput" placeholder="输入对方 UID 或昵称">' +
+                        '<div class="mp-uid-row"><input class="mp-uid-input" id="mpAddFriendInput" placeholder="输入对方 UID、用户名或昵称">' +
                         '<button class="gm-uid-invite-btn" id="mpAddFriendBtn">添加</button></div>' +
                     '</div>' +
                     '<div class="mp-section">' +

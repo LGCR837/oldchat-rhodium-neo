@@ -473,8 +473,8 @@ def init_web(app):
         if not identifier or not password:
             return jsonify({"success": False, "error": "请填写所有字段"}), 400
         row = app_module.db_query_one(
-            "SELECT * FROM users WHERE uid = ? OR username = ?",
-            (identifier.upper(), identifier),
+            "SELECT * FROM users WHERE uid = ? OR username = ? OR display_name = ?",
+            (identifier.upper(), identifier, identifier),
         )
         if not row:
             return jsonify({"success": False, "error": "用户不存在"}), 401
@@ -505,9 +505,14 @@ def init_web(app):
         exist = app_module.db_query_one("SELECT id FROM users WHERE username = ?", (username,))
         if exist:
             return jsonify({"success": False, "error": "用户名已存在"}), 409
-        uid = app_module.gen_uid()
+        base_uid = ''.join(c for c in username.upper() if c.isalnum())
+        if len(base_uid) < 3:
+            base_uid = base_uid + app_module.secrets.token_hex(3).upper()
+        uid = base_uid
+        counter = 1
         while app_module.db_query_one("SELECT id FROM users WHERE uid = ?", (uid,)):
-            uid = app_module.gen_uid()
+            uid = base_uid + str(counter)
+            counter += 1
         pwd_hash = app_module.hash_password(password)
         now = app_module.now_ts()
         uid_int = app_module.db_execute(
@@ -1370,10 +1375,13 @@ def init_web(app):
         if not user:
             return jsonify({"error": "未登录"}), 401
         data = request.get_json(silent=True) or {}
-        to_uid = (data.get("to_uid") or "").strip().upper()
-        if not to_uid:
+        identifier = (data.get("to_uid") or "").strip()
+        if not identifier:
             return jsonify({"error": "参数错误"}), 400
-        target = app_module.db_query_one("SELECT id, uid FROM users WHERE uid = ?", (to_uid,))
+        target = app_module.db_query_one(
+            "SELECT id, uid FROM users WHERE uid = ? OR username = ? OR display_name = ?",
+            (identifier.upper(), identifier, identifier),
+        )
         if not target:
             return jsonify({"error": "用户不存在"}), 404
         if target["id"] == user["id"]:
