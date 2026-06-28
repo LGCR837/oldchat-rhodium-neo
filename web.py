@@ -361,10 +361,10 @@ def init_web(app):
         <div class="app-container">
         <aside class="sidebar">
             <div class="sidebar-header">
-                <span class="user-info">{{ user_name }}</span>
-                <button id="pinSidebarBtn" class="icon-btn" title="取消固定"><i class="fa-solid fa-thumbtack"></i></button>
-                <button id="themeToggleBtn" class="icon-btn" title="切换主题"><i class="fa-solid fa-circle-half-stroke"></i></button>
+                <span class="user-info" id="sidebarUserName" style="cursor:pointer" onclick="openMyProfile()">{{ user_name }}</span>
                 <button id="logoutBtn" class="icon-btn" title="退出登录"><i class="fa-solid fa-right-from-bracket"></i></button>
+                <button id="themeToggleBtn" class="icon-btn" title="切换主题"><i class="fa-solid fa-circle-half-stroke"></i></button>
+                <button id="pinSidebarBtn" class="icon-btn" title="取消固定"><i class="fa-solid fa-thumbtack"></i></button>
             </div>
             <div class="contact-list" id="contactList"></div>
         </aside>
@@ -1593,6 +1593,129 @@ def init_web(app):
         return jsonify({"success": True})
 
     # =========================================================================
+    #  个人主页 API
+    # =========================================================================
+
+    def web_api_profile_update():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        sets, params = [], []
+        if "display_name" in data:
+            sets.append("display_name = ?"); params.append(data["display_name"])
+        if "bio" in data:
+            sets.append("bio = ?"); params.append(data["bio"])
+        if "signature" in data:
+            sets.append("signature = ?"); params.append(data["signature"])
+        if "avatar_url" in data:
+            sets.append("avatar_url = ?"); params.append(data["avatar_url"])
+        if sets:
+            params.append(user["id"])
+            app_module.db_execute("UPDATE users SET %s WHERE id = ?" % ", ".join(sets), tuple(params))
+        row = app_module.db_query_one("SELECT * FROM users WHERE id = ?", (user["id"],))
+        return jsonify({
+            "uid": row["uid"],
+            "username": row["username"],
+            "display_name": row["display_name"] or row["uid"],
+            "avatar_url": row["avatar_url"] or "",
+            "bio": row["bio"] or "",
+            "signature": row["signature"] if "signature" in row.keys() else "",
+            "created_at": row["created_at"],
+        })
+
+    def web_api_friend_requests():
+        from flask import jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        rows = app_module.db_query_all(
+            """SELECT u.uid, u.display_name, u.username, u.avatar_url, f.created_at
+               FROM friendships f
+               JOIN users u ON u.id = f.user_id
+               WHERE f.friend_id = ? AND f.status = 'pending'
+               ORDER BY f.created_at DESC""",
+            (user["id"],),
+        )
+        return jsonify({"requests": [
+            {
+                "uid": r["uid"],
+                "display_name": r["display_name"] or r["username"],
+                "avatar_url": r["avatar_url"] or "",
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]})
+
+    def web_api_profile_upload_avatar():
+        from flask import request, jsonify
+        import app as app_module
+        import secrets, os
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        if "file" not in request.files:
+            return jsonify({"error": "no file"}), 400
+        f = request.files["file"]
+        if not f or f.filename == "":
+            return jsonify({"error": "empty file"}), 400
+        ext = os.path.splitext(f.filename)[1].lower()
+        filename = "avatar_" + secrets.token_hex(16) + ext
+        filepath = os.path.join(app_module.MEDIA_DIR, filename)
+        f.save(filepath)
+        avatar_url = "/media/" + filename
+        app_module.db_execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar_url, user["id"]))
+        return jsonify({"avatar_url": avatar_url})
+
+    def web_api_profile_update_uid():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        new_uid = (data.get("uid") or "").strip().upper()
+        if not new_uid:
+            return jsonify({"error": "UID 不能为空"}), 400
+        if len(new_uid) < 3 or len(new_uid) > 32:
+            return jsonify({"error": "UID 长度需为 3-32 个字符"}), 400
+        existing = app_module.db_query_one("SELECT id FROM users WHERE uid = ?", (new_uid,))
+        if existing and existing["id"] != user["id"]:
+            return jsonify({"error": "该 UID 已被使用"}), 400
+        app_module.db_execute("UPDATE users SET uid = ? WHERE id = ?", (new_uid, user["id"]))
+        return jsonify({"uid": new_uid})
+
+    def web_api_post_moment():
+        from flask import request, jsonify
+        import app as app_module
+        import secrets, os
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        body = request.form.get("body", "").strip()
+        media_url = ""
+        if "file" in request.files:
+            f = request.files["file"]
+            if f and f.filename:
+                ext = os.path.splitext(f.filename)[1].lower()
+                filename = "moment_" + secrets.token_hex(16) + ext
+                filepath = os.path.join(app_module.MEDIA_DIR, filename)
+                f.save(filepath)
+                media_url = "/media/" + filename
+        if not body and not media_url:
+            return jsonify({"error": "请输入内容或上传图片"}), 400
+        now = app_module.now_ts()
+        moment_id = app_module.gen_moment_id()
+        app_module.db_execute(
+            "INSERT INTO moments (moment_id, user_id, body, media_url, thumb_url, created_at, likes) VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (moment_id, user["id"], body, media_url, media_url, now),
+        )
+        return jsonify({"success": True, "moment_id": moment_id, "body": body, "media_url": media_url, "created_at": now})
+
+    # =========================================================================
     #  注册路由
     # =========================================================================
 
@@ -1624,3 +1747,8 @@ def init_web(app):
     app.add_url_rule("/web/api/group_info/<group_id>", "web_api_group_info", web_api_group_info)
     app.add_url_rule("/web/api/group/invite", "web_api_group_invite", web_api_group_invite, methods=["POST"])
     app.add_url_rule("/web/api/group/leave", "web_api_group_leave", web_api_group_leave, methods=["POST"])
+    app.add_url_rule("/web/api/profile/update", "web_api_profile_update", web_api_profile_update, methods=["POST"])
+    app.add_url_rule("/web/api/friend_requests", "web_api_friend_requests", web_api_friend_requests)
+    app.add_url_rule("/web/api/profile/avatar", "web_api_profile_upload_avatar", web_api_profile_upload_avatar, methods=["POST"])
+    app.add_url_rule("/web/api/profile/update_uid", "web_api_profile_update_uid", web_api_profile_update_uid, methods=["POST"])
+    app.add_url_rule("/web/api/moments/post", "web_api_post_moment", web_api_post_moment, methods=["POST"])

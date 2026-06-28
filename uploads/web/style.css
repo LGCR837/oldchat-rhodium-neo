@@ -1501,3 +1501,233 @@ body::-webkit-scrollbar {
     font-weight: 500;
 }
 .gm-leave-btn:hover { opacity: 0.85; }
+
+/* 个人主页 */
+.mp-header {
+    background: var(--header-bg);
+    color: #fff;
+    padding: 13px 12px;
+    display: flex;
+    align-items: center;
+    font-size: 15px;
+    font-weight: 500;
+    flex-shrink: 0;
+    position: relative;
+}
+.mp-back {
+    position: absolute;
+    left: 12px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 8px;
+}
+.mp-header span {
+    width: 100%;
+    text-align: center;
+}
+.mp-profile {
+    background: var(--chat-bg);
+    padding: 28px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+}
+.mp-avatar-wrap {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin-bottom: 12px;
+    cursor: pointer;
+}
+.mp-avatar-wrap:hover .mp-avatar-mask {
+    opacity: 1;
+}
+.mp-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--border);
+}
+.mp-avatar-mask {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s;
+    color: #fff;
+    font-size: 12px;
+}
+.mp-field {
+    text-align: center;
+    margin-bottom: 4px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.mp-field:hover {
+    background: var(--hover);
+}
+.mp-field-name {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+}
+.mp-field-uid {
+    font-size: 12px;
+    color: var(--secondary-text);
+    margin-bottom: 4px;
+}
+.mp-field-bio {
+    font-size: 13px;
+    color: var(--secondary-text);
+    margin-bottom: 12px;
+    text-align: center;
+    max-width: 300px;
+}
+.mp-field-created {
+    font-size: 12px;
+    color: var(--secondary-text);
+    margin-bottom: 4px;
+}
+.mp-edit-input {
+    text-align: center;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--chat-bg);
+    border: 1.5px solid var(--accent);
+    border-radius: 8px;
+    padding: 4px 12px;
+    outline: none;
+    font-family: inherit;
+    width: 200px;
+    max-width: 80vw;
+}
+.mp-edit-input.mp-edit-bio {
+    font-size: 13px;
+    font-weight: 400;
+    width: 280px;
+    max-width: 85vw;
+}
+.mp-space-btn {
+    display: inline-block;
+    padding: 6px 20px;
+    border-radius: 20px;
+    border: 1.5px solid var(--accent);
+    background: var(--chat-bg);
+    color: var(--accent);
+    font-size: 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+.mp-space-btn:hover { background: var(--hover); }
+.mp-section {
+    padding: 0 16px;
+}
+.mp-section-header {
+    padding: 14px 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+.mp-req-list {
+    background: var(--chat-bg);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+.mp-req-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.mp-req-item:last-child { border-bottom: none; }
+.mp-req-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-right: 12px;
+    background: var(--border);
+    flex-shrink: 0;
+}
+.mp-req-info {
+    flex: 1;
+    min-width: 0;
+}
+.mp-req-name {
+    font-size: 14px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mp-req-time {
+    font-size: 12px;
+    color: var(--secondary-text);
+}
+.mp-req-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+.mp-accept-btn, .mp-reject-btn {
+    padding: 4px 12px;
+    border-radius: 14px;
+    border: none;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.mp-accept-btn {
+    background: var(--accent);
+    color: #fff;
+}
+.mp-accept-btn:hover { opacity: 0.85; }
+.mp-reject-btn {
+    background: var(--hover);
+    color: var(--secondary-text);
+}
+.mp-reject-btn:hover { opacity: 0.85; }
+.mp-empty {
+    text-align: center;
+    padding: 20px;
+    color: var(--secondary-text);
+    font-size: 13px;
+}
+.mp-uid-row {
+    display: flex;
+    gap: 8px;
+    padding: 8px 0 16px;
+}
+.mp-uid-input {
+    flex: 1;
+    padding: 8px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--chat-bg);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+}
+.mp-uid-input:focus { border-color: var(--accent); }

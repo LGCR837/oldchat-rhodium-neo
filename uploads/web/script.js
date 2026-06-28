@@ -249,6 +249,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     });
                     momentsHtml += '</div>';
                 }
+                let postMomentHtml = '';
+                if (relation === 'self') {
+                    postMomentHtml =
+                        '<div style="padding:0 16px 12px;max-width:960px;margin:0 auto;">' +
+                            '<div style="background:var(--chat-bg);border-radius:12px;padding:14px 16px;border:1px solid var(--border);">' +
+                                '<textarea id="spMomentInput" placeholder="分享新鲜事..." style="width:100%;min-height:60px;border:none;background:transparent;color:var(--text);font-size:14px;font-family:inherit;resize:none;outline:none;line-height:1.6;"></textarea>' +
+                                '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">' +
+                                    '<div style="display:flex;align-items:center;gap:8px;">' +
+                                        '<label style="cursor:pointer;color:var(--secondary-text);font-size:13px;" title="添加图片"><i class="fa-solid fa-image"></i> 图片<input type="file" id="spMomentFile" accept="image/*" style="display:none;"></label>' +
+                                        '<span id="spMomentFileName" style="font-size:12px;color:var(--secondary-text);cursor:pointer;" title="点击移除图片"></span>' +
+                                    '</div>' +
+                                    '<button id="spMomentBtn" style="padding:5px 18px;border-radius:16px;border:none;background:var(--accent);color:#fff;font-size:13px;cursor:pointer;font-family:inherit;font-weight:500;">发布</button>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>';
+                }
                 scroll.innerHTML =
                     '<div style="background:var(--chat-bg);padding:28px 20px 20px;display:flex;flex-direction:column;align-items:center;border-bottom:1px solid var(--border);">' +
                         '<img src="' + avatar + '" style="width:80px;height:80px;border-radius:50%;object-fit:cover;margin-bottom:12px;background:var(--border);" onerror="this.src=\'' + defaultAvatar + '\'">' +
@@ -258,7 +274,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         '<div style="font-size:12px;color:var(--secondary-text);margin-bottom:10px;">注册于 ' + fmtTs(u.created_at) + '</div>' +
                         (btnHtml ? '<div style="display:flex;gap:10px;">' + btnHtml + '</div>' : '') +
                     '</div>' +
-                    '<div style="font-size:14px;font-weight:600;color:var(--text);padding:14px 16px 8px;">TA 的动态</div>' +
+                    (relation === 'self' ? '<div style="font-size:14px;font-weight:600;color:var(--text);padding:14px 16px 8px;">发表动态</div>' + postMomentHtml : '') +
+                    '<div style="font-size:14px;font-weight:600;color:var(--text);padding:14px 16px 8px;">' + (relation === 'self' ? '我的动态' : 'TA 的动态') + '</div>' +
                     momentsHtml;
 
                 window.spMsg = function() {
@@ -287,6 +304,43 @@ document.addEventListener('DOMContentLoaded', () => {
                         load();
                     } catch(e) { alert('请求失败'); }
                 };
+
+                if (relation === 'self') {
+                    const momentFile = document.getElementById('spMomentFile');
+                    const momentFileName = document.getElementById('spMomentFileName');
+                    const momentBtn = document.getElementById('spMomentBtn');
+                    if (momentFile) {
+                        momentFile.addEventListener('change', () => {
+                            const f = momentFile.files[0];
+                            momentFileName.textContent = f ? '已选择: ' + f.name + ' ✕' : '';
+                        });
+                    }
+                    if (momentFileName) {
+                        momentFileName.addEventListener('click', () => {
+                            if (momentFile) momentFile.value = '';
+                            momentFileName.textContent = '';
+                        });
+                    }
+                    if (momentBtn) {
+                        momentBtn.addEventListener('click', async () => {
+                            const input = document.getElementById('spMomentInput');
+                            const text = (input?.value || '').trim();
+                            const file = momentFile?.files[0];
+                            if (!text && !file) { alert('请输入内容或选择图片'); return; }
+                            momentBtn.disabled = true;
+                            momentBtn.textContent = '发布中...';
+                            const fd = new FormData();
+                            if (text) fd.append('body', text);
+                            if (file) fd.append('file', file);
+                            try {
+                                const r = await fetch('/web/api/moments/post', { method: 'POST', body: fd });
+                                const d = await r.json();
+                                if (d.error) { alert(d.error); momentBtn.disabled = false; momentBtn.textContent = '发布'; return; }
+                                load();
+                            } catch(e) { alert('发布失败'); momentBtn.disabled = false; momentBtn.textContent = '发布'; }
+                        });
+                    }
+                }
             } catch(e) {
                 scroll.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载失败</div>';
             }
@@ -491,6 +545,276 @@ document.addEventListener('DOMContentLoaded', () => {
 
         load();
     }
+
+    function openMyProfile() {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;font-family:inherit;opacity:0;transition:opacity 0.2s;';
+        overlay.innerHTML = `
+            <div class="mp-header">
+                <button class="mp-back" onclick="this.closest('div[style*=fixed]').remove()"><i class="fa-solid fa-chevron-left"></i></button>
+                <span>个人主页</span>
+            </div>
+            <div id="mp-scroll" style="flex:1;overflow-y:auto;scrollbar-color:rgba(0,0,0,0.2) transparent;"></div>
+        `;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.style.opacity = '1');
+        const scroll = overlay.querySelector('#mp-scroll');
+        scroll.innerHTML = '<div style="text-align:center;padding:40px;color:var(--secondary-text);">加载中...</div>';
+
+        let currentProfile = null;
+
+        function fmtTs(ts) {
+            if (!ts) return '';
+            const d = new Date(ts * 1000);
+            const pad = n => (n < 10 ? '0' : '') + n;
+            return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
+        async function load() {
+            try {
+                const [profRes, reqRes] = await Promise.all([
+                    fetch('/web/api/space/' + myUid),
+                    fetch('/web/api/friend_requests')
+                ]);
+                const prof = await profRes.json();
+                const reqData = await reqRes.json();
+                if (prof.error) { scroll.innerHTML = '<div style="text-align:center;padding:40px;color:var(--secondary-text);">' + prof.error + '</div>'; return; }
+                currentProfile = prof.user;
+                const avatar = currentProfile.avatar_url || defaultAvatar;
+                const requests = reqData.requests || [];
+
+                let reqHtml = '';
+                if (requests.length > 0) {
+                    requests.forEach(r => {
+                        const rAvatar = r.avatar_url || defaultAvatar;
+                        reqHtml += `<div class="mp-req-item">` +
+                            `<img class="mp-req-avatar" src="${rAvatar}" onerror="this.src='${defaultAvatar}'">` +
+                            `<div class="mp-req-info"><div class="mp-req-name">${escapeHtml(r.display_name)}</div>` +
+                            `<div class="mp-req-time">${fmtTs(r.created_at)}</div></div>` +
+                            `<div class="mp-req-actions">` +
+                            `<button class="mp-accept-btn" data-uid="${escapeHtml(r.uid)}">接受</button>` +
+                            `<button class="mp-reject-btn" data-uid="${escapeHtml(r.uid)}">拒绝</button>` +
+                            `</div></div>`;
+                    });
+                } else {
+                    reqHtml = '<div class="mp-empty">暂无好友申请</div>';
+                }
+
+                scroll.innerHTML =
+                    '<div class="mp-profile">' +
+                        `<div class="mp-avatar-wrap" id="mpAvatarWrap">` +
+                            `<img class="mp-avatar" id="mpAvatar" src="${avatar}" onerror="this.src='${defaultAvatar}'">` +
+                            `<div class="mp-avatar-mask">更换头像</div>` +
+                        `</div>` +
+                        `<input type="file" id="mpAvatarInput" accept="image/*" style="display:none">` +
+                        `<div class="mp-field" id="mpNameField"><div class="mp-field-name" id="mpNameText">${escapeHtml(currentProfile.display_name || currentProfile.username)}</div></div>` +
+                        `<div class="mp-field" id="mpUidField"><div class="mp-field-uid" id="mpUidText">${escapeHtml(currentProfile.uid)}</div></div>` +
+                        `<div class="mp-field" id="mpBioField"><div class="mp-field-bio" id="mpBioText">${currentProfile.bio ? escapeHtml(currentProfile.bio) : '点击添加签名'}</div></div>` +
+                        `<div class="mp-field-created">注册于 ${fmtTs(currentProfile.created_at)}</div>` +
+                        `<button class="mp-space-btn" id="mpSpaceBtn">查看我的空间</button>` +
+                    '</div>' +
+                    '<div class="mp-section">' +
+                        '<div class="mp-section-header">添加好友</div>' +
+                        '<div class="mp-uid-row"><input class="mp-uid-input" id="mpAddFriendInput" placeholder="输入对方 UID 或昵称">' +
+                        '<button class="gm-uid-invite-btn" id="mpAddFriendBtn">添加</button></div>' +
+                    '</div>' +
+                    '<div class="mp-section">' +
+                        '<div class="mp-section-header">加入群聊</div>' +
+                        '<div class="mp-uid-row"><input class="mp-uid-input" id="mpJoinGroupInput" placeholder="输入群聊 ID">' +
+                        '<button class="gm-uid-invite-btn" id="mpJoinGroupBtn">加入</button></div>' +
+                    '</div>' +
+                    '<div class="mp-section">' +
+                        '<div class="mp-section-header">好友申请 (' + requests.length + ')</div>' +
+                        '<div class="mp-req-list">' + reqHtml + '</div>' +
+                    '</div>';
+
+                document.getElementById('mpSpaceBtn').addEventListener('click', () => {
+                    overlay.remove();
+                    openSpacePanel(myUid);
+                });
+
+                document.getElementById('mpAvatarWrap').addEventListener('click', () => {
+                    document.getElementById('mpAvatarInput').click();
+                });
+
+                document.getElementById('mpAvatarInput').addEventListener('change', async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    try {
+                        const r = await fetch('/web/api/profile/avatar', { method: 'POST', body: formData });
+                        const d = await r.json();
+                        if (d.error) { alert(d.error); return; }
+                        document.getElementById('mpAvatar').src = d.avatar_url;
+                        const metaAvatar = document.querySelector('meta[name="avatar"]');
+                        if (metaAvatar) metaAvatar.content = d.avatar_url;
+                    } catch (err) { alert('上传失败'); }
+                });
+
+                document.getElementById('mpAddFriendBtn').addEventListener('click', async () => {
+                    const input = document.getElementById('mpAddFriendInput');
+                    const val = input.value.trim();
+                    if (!val) { alert('请输入 UID 或昵称'); return; }
+                    const btn = document.getElementById('mpAddFriendBtn');
+                    btn.disabled = true;
+                    btn.textContent = '发送中...';
+                    try {
+                        const r = await fetch('/web/api/space/add_friend', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ to_uid: val.toUpperCase() })
+                        });
+                        const d = await r.json();
+                        if (d.error) { alert(d.error); } else { alert(d.message || '已发送申请'); input.value = ''; }
+                    } catch(e) { alert('请求失败'); }
+                    btn.disabled = false;
+                    btn.textContent = '添加';
+                });
+
+                document.getElementById('mpJoinGroupBtn').addEventListener('click', async () => {
+                    const input = document.getElementById('mpJoinGroupInput');
+                    const val = input.value.trim().toUpperCase();
+                    if (!val) { alert('请输入群聊 ID'); return; }
+                    const btn = document.getElementById('mpJoinGroupBtn');
+                    btn.disabled = true;
+                    btn.textContent = '加入中...';
+                    try {
+                        const r = await fetch('/v1/groups/join', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ group_id: val })
+                        });
+                        const d = await r.json();
+                        if (d.error || d.code) { alert(d.msg || d.error || '加入失败'); } else { alert('已加入群聊'); input.value = ''; loadContacts(); }
+                    } catch(e) { alert('请求失败'); }
+                    btn.disabled = false;
+                    btn.textContent = '加入';
+                });
+
+                document.getElementById('mpNameField').addEventListener('click', () => {
+                    const field = document.getElementById('mpNameField');
+                    const val = currentProfile.display_name || currentProfile.username;
+                    field.innerHTML = `<input class="mp-edit-input" id="mpNameInput" value="${escapeHtml(val)}">`;
+                    const input = document.getElementById('mpNameInput');
+                    input.focus();
+                    input.select();
+                    const save = async () => {
+                        const newVal = input.value.trim();
+                        if (!newVal || newVal === val) {
+                            field.innerHTML = `<div class="mp-field-name" id="mpNameText">${escapeHtml(val)}</div>`;
+                            return;
+                        }
+                        try {
+                            const r = await fetch('/web/api/profile/update', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ display_name: newVal })
+                            });
+                            const d = await r.json();
+                            if (d.error) { alert(d.error); return; }
+                            currentProfile.display_name = d.display_name;
+                            field.innerHTML = `<div class="mp-field-name" id="mpNameText">${escapeHtml(d.display_name)}</div>`;
+                            document.getElementById('sidebarUserName').textContent = d.display_name;
+                        } catch (err) { alert('保存失败'); }
+                    };
+                    input.addEventListener('blur', save);
+                    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); } });
+                });
+
+                document.getElementById('mpUidField').addEventListener('click', () => {
+                    const field = document.getElementById('mpUidField');
+                    const val = currentProfile.uid;
+                    field.innerHTML = `<input class="mp-edit-input" id="mpUidInput" value="${escapeHtml(val)}" style="font-size:13px;font-weight:400;text-transform:uppercase;">`;
+                    const input = document.getElementById('mpUidInput');
+                    input.focus();
+                    input.select();
+                    const save = async () => {
+                        const newVal = input.value.trim().toUpperCase();
+                        if (!newVal || newVal === val) {
+                            field.innerHTML = `<div class="mp-field-uid" id="mpUidText">${escapeHtml(val)}</div>`;
+                            return;
+                        }
+                        try {
+                            const r = await fetch('/web/api/profile/update_uid', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ uid: newVal })
+                            });
+                            const d = await r.json();
+                            if (d.error) { alert(d.error); return; }
+                            currentProfile.uid = d.uid;
+                            field.innerHTML = `<div class="mp-field-uid" id="mpUidText">${escapeHtml(d.uid)}</div>`;
+                        } catch (err) { alert('保存失败'); }
+                    };
+                    input.addEventListener('blur', save);
+                    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); } });
+                });
+
+                document.getElementById('mpBioField').addEventListener('click', () => {
+                    const field = document.getElementById('mpBioField');
+                    const val = currentProfile.bio || '';
+                    field.innerHTML = `<input class="mp-edit-input mp-edit-bio" id="mpBioInput" value="${escapeHtml(val)}" placeholder="添加签名">`;
+                    const input = document.getElementById('mpBioInput');
+                    input.focus();
+                    const save = async () => {
+                        const newVal = input.value.trim();
+                        if (newVal === val) {
+                            field.innerHTML = `<div class="mp-field-bio" id="mpBioText">${val ? escapeHtml(val) : '点击添加签名'}</div>`;
+                            return;
+                        }
+                        try {
+                            const r = await fetch('/web/api/profile/update', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ bio: newVal })
+                            });
+                            const d = await r.json();
+                            if (d.error) { alert(d.error); return; }
+                            currentProfile.bio = d.bio;
+                            field.innerHTML = `<div class="mp-field-bio" id="mpBioText">${d.bio ? escapeHtml(d.bio) : '点击添加签名'}</div>`;
+                        } catch (err) { alert('保存失败'); }
+                    };
+                    input.addEventListener('blur', save);
+                    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); } });
+                });
+
+                scroll.querySelectorAll('.mp-accept-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const uid = btn.dataset.uid;
+                        try {
+                            const r = await fetch('/web/api/space/respond_friend', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ uid: uid, action: 'accept' })
+                            });
+                            await r.json();
+                            load();
+                        } catch (err) { alert('操作失败'); }
+                    });
+                });
+
+                scroll.querySelectorAll('.mp-reject-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const uid = btn.dataset.uid;
+                        try {
+                            const r = await fetch('/web/api/space/respond_friend', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ uid: uid, action: 'reject' })
+                            });
+                            await r.json();
+                            load();
+                        } catch (err) { alert('操作失败'); }
+                    });
+                });
+            } catch (e) {
+                scroll.innerHTML = '<div style="text-align:center;padding:40px;color:var(--secondary-text);">加载失败</div>';
+            }
+        }
+        load();
+    }
+    window.openMyProfile = openMyProfile;
 
     let contextMenu = null;
     let contextMsgId = null;
