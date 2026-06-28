@@ -33,7 +33,7 @@
 	--border: #2a2a4a;
 	--hover: #2a2a4a;
 	--active: #3a3a5a;
-	--shadow: 0 2px 6px rgba(0,0,0,0.3);
+	--shadow: 0 4px 12px rgba(0,0,0,0.5);
 	--msg-other-bg: #2a2a4a;
 	--bubble-other: #3a3a5a;
 	--bubble-self: #4a6a9a;
@@ -56,7 +56,8 @@ body, .sidebar, .chat-area, .messages, .input-area, .contact-list, .chat-header,
 * {
 	box-sizing: border-box;
 	margin: 0;
-	padding: 0
+	padding: 0;
+	-webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -64,7 +65,12 @@ body {
 	color: var(--text);
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
 	height: 100vh;
-	overflow: hidden
+	overflow: hidden;
+	overflow-x: hidden;
+	scrollbar-width: none;
+}
+body::-webkit-scrollbar {
+	display: none;
 }
 
 .app-container {
@@ -194,8 +200,12 @@ body {
 }
 
 .contact-item.active {
-	background: linear-gradient(to right, rgba(0,0,0,0.07), rgba(0,0,0,0.02));
+	background: rgba(0,0,0,0.07);
 	font-weight: 500
+}
+
+[data-theme="dark"] .contact-item.active {
+	background: rgba(255,255,255,0.12);
 }
 
 .contact-item .name {
@@ -213,7 +223,6 @@ body {
 	align-items: center;
 	padding: 15px 15px;
 	cursor: pointer;
-	border-bottom: 1px solid rgba(0,0,0,0.06);
 	transition: background 0.2s;
 	font-family: 'zyyt','微软雅黑','Microsoft YaHei',sans-serif;
 	background: transparent;
@@ -1206,5 +1215,9 @@ body {
 
     .mobile-menu-btn {
         display: flex;
+    }
+
+    .input-area textarea {
+        min-height: auto;
     }
 }

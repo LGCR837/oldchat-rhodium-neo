@@ -28,7 +28,7 @@ def init_web(app):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>OldChat for Kivotos</title>
-    <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
+    <link rel="icon" href="/uploads/oldchat_logo.png" type="image/jpeg">
     <style>
         @font-face {
             font-family: 'zyyt';
@@ -187,8 +187,8 @@ def init_web(app):
         [data-theme="dark"] .login-header { background: #16213e; }
         [data-theme="dark"] .login-card { background: #2a2a4a; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
         [data-theme="dark"] .login-card-top h1 { color: #8aa0b8; }
-        [data-theme="dark"] .tab { background: #3a3a5a; color: #a0a0a0; }
-        [data-theme="dark"] .tab.active { background: #8aa0b8; color: #fff; }
+        [data-theme="dark"] .tab { background: #2a2a4a; color: #a0a0a0; }
+        [data-theme="dark"] .tab.active { background: #2a2a4a; color: #e0e0e0; border-bottom-color: #8aa0b8; }
         [data-theme="dark"] .form-group input { background: #1a1a2e; border-color: #3a3a5a; color: #e0e0e0; }
         [data-theme="dark"] .form-group input:focus { border-color: #8aa0b8; }
         [data-theme="dark"] .checkbox-group label { color: #a0a0a0; }
@@ -349,7 +349,7 @@ def init_web(app):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>OldChat for Kivotos</title>
-    <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
+    <link rel="icon" href="/uploads/oldchat_logo.png" type="image/jpeg">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
     <link rel="stylesheet" href="/web/static/style.css">
     <meta name="uid" content="{{ uid }}">
@@ -980,7 +980,7 @@ def init_web(app):
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>用户主页 - OldChat for Kivotos</title>
-    <link rel="icon" href="https://gwebcdn260523.pages.dev/v1/static/momotalklogo.png" type="image/png">
+    <link rel="icon" href="/uploads/oldchat_logo.png" type="image/jpeg">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7/css/all.min.css">
     <link rel="stylesheet" href="/web/static/style.css">
     <style>
@@ -1452,6 +1452,53 @@ def init_web(app):
         directs = {r["uid"]: r["cnt"] for r in dm_rows}
         return jsonify({"groups": groups, "directs": directs})
 
+    def web_api_recall():
+        from flask import request, jsonify
+        import app as app_module
+        user = _web_current_user()
+        if not user:
+            return jsonify({"error": "未登录"}), 401
+        data = request.get_json(silent=True) or {}
+        msg_id = data.get("msg_id")
+        conv_type = data.get("type", "direct")
+        target_id = data.get("target_id", "")
+        if not msg_id:
+            return jsonify({"error": "参数错误"}), 400
+        my_id = user["id"]
+        my_name = user["display_name"] or user["username"]
+        recall_text = f"{my_name} 撤回了一条消息"
+        if conv_type == "direct":
+            msg = app_module.db_query_one(
+                "SELECT id, from_id, created_at FROM direct_messages WHERE id = ?",
+                (msg_id,),
+            )
+            if not msg:
+                return jsonify({"error": "消息不存在"}), 404
+            if msg["from_id"] != my_id:
+                return jsonify({"error": "只能撤回自己的消息"}), 403
+            if msg["created_at"] and (app_module.now_ts() - msg["created_at"]) > 120:
+                return jsonify({"error": "消息超过2分钟无法撤回"}), 400
+            app_module.db_execute(
+                "UPDATE direct_messages SET body = ?, msg_type = 'recall' WHERE id = ?",
+                (recall_text, msg_id),
+            )
+        elif conv_type == "group":
+            msg = app_module.db_query_one(
+                "SELECT id, from_id, created_at FROM group_messages WHERE id = ?",
+                (msg_id,),
+            )
+            if not msg:
+                return jsonify({"error": "消息不存在"}), 404
+            if msg["from_id"] != my_id:
+                return jsonify({"error": "只能撤回自己的消息"}), 403
+            if msg["created_at"] and (app_module.now_ts() - msg["created_at"]) > 120:
+                return jsonify({"error": "消息超过2分钟无法撤回"}), 400
+            app_module.db_execute(
+                "UPDATE group_messages SET body = ?, msg_type = 'recall' WHERE id = ?",
+                (recall_text, msg_id),
+            )
+        return jsonify({"success": True, "recall_text": recall_text})
+
     # =========================================================================
     #  注册路由
     # =========================================================================
@@ -1479,3 +1526,4 @@ def init_web(app):
     app.add_url_rule("/web/api/space/add_friend", "web_api_space_add_friend", web_api_space_add_friend, methods=["POST"])
     app.add_url_rule("/web/api/space/respond_friend", "web_api_space_respond_friend", web_api_space_respond_friend, methods=["POST"])
     app.add_url_rule("/web/api/unread_counts", "web_api_unread_counts", web_api_unread_counts)
+    app.add_url_rule("/web/api/recall", "web_api_recall", web_api_recall, methods=["POST"])

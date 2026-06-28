@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ====================================================================
 # OldChat 兼容服务器 — 单文件实现 (Python 3 + Flask + SQLite3 + eventlet)
 # 参考: OldChat Android 源码 (g0/*, o0/*, com/im/oldchat/ui/*)
@@ -84,7 +85,7 @@ def _load_settings(path):
         "server": {"name": "OldChat", "version": "1.0.0", "url": "", "host": "0.0.0.0", "port": 8080},
         "debug": false,
         "announcement": {"title": "服务器公告", "body": "这是 OldChat 兼容服务器。", "enabled": true},
-        "auto_join_group": {"enabled": True, "group_id": "", "group_name": "官方群聊", "auto_create": True, "welcome_message": "加入群聊"},
+        "auto_join_group": {"enabled": True, "group_id": "", "group_name": "官方群聊", "auto_create": True, "welcome_message": "加入了群聊"},
         "features": {},
         "limits": {"max_upload_mb": 20, "max_message_length": 2000},
     }
@@ -1372,19 +1373,23 @@ def group_messages():
     for r in rows:
         from_user = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (r["from_id"],)) if r["from_id"] else None
         is_system = r["from_id"] == 0
+        # 系统消息在客户端显示为撤回气泡样式
+        msg_type = r["msg_type"] or "text"
+        if is_system:
+            msg_type = "recall"
         messages.append({
             "id": str(r["id"]),
             "group_id": r["group_id"],
             "thread_id": r["group_id"],
             "from_uid": from_user["uid"] if from_user else ("system" if is_system else ""),
             "body": r["body"] or "",
-            "msg_type": r["msg_type"] or "text",
+            "msg_type": msg_type,
             "media_url": r["media_url"] or "",
             "thumb_url": r["thumb_url"] or "",
             "duration_ms": r["burn_after_seconds"] or 0,
             "created_at": r["created_at"],
             "status": 1,
-            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else ("系统消息" if is_system else ""),
+            "from_name": (from_user["display_name"] or from_user["uid"]) if from_user else ("系统" if is_system else ""),
             "from_avatar": from_user["avatar_url"] or "" if from_user else "",
         })
     return jsonify({"messages": messages})
@@ -1456,6 +1461,42 @@ def group_read():
         "UPDATE group_members SET last_read_msg_id = ? WHERE group_id = ? AND user_id = ?",
         (max_id, group_id, g.current_user_id),
     )
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/groups/messages/<int:msg_id>", methods=["DELETE"])
+def group_message_delete(msg_id):
+    _auth = require_auth()
+    if _auth: return _auth
+    me = g.current_user_id
+    msg = db_query_one("SELECT id, from_id, created_at FROM group_messages WHERE id = ?", (msg_id,))
+    if not msg:
+        return jsonify({"error": "message not found"}), 404
+    if msg["from_id"] != me:
+        return jsonify({"error": "can only recall your own messages"}), 403
+    if msg["created_at"] and (now_ts() - msg["created_at"]) > 120:
+        return jsonify({"error": "message too old to recall"}), 400
+    user = db_query_one("SELECT display_name, username FROM users WHERE id = ?", (me,))
+    my_name = (user["display_name"] or user["username"]) if user else "未知用户"
+    recall_text = f"{my_name} 撤回了一条消息"
+    db_execute("UPDATE group_messages SET body = ?, msg_type = 'recall' WHERE id = ?", (recall_text, msg_id))
+    return jsonify({"status": "ok"})
+
+@app.route("/v1/direct/messages/<int:msg_id>", methods=["DELETE"])
+def direct_message_delete(msg_id):
+    _auth = require_auth()
+    if _auth: return _auth
+    me = g.current_user_id
+    msg = db_query_one("SELECT id, from_id, created_at FROM direct_messages WHERE id = ?", (msg_id,))
+    if not msg:
+        return jsonify({"error": "message not found"}), 404
+    if msg["from_id"] != me:
+        return jsonify({"error": "can only recall your own messages"}), 403
+    if msg["created_at"] and (now_ts() - msg["created_at"]) > 120:
+        return jsonify({"error": "message too old to recall"}), 400
+    user = db_query_one("SELECT display_name, username FROM users WHERE id = ?", (me,))
+    my_name = (user["display_name"] or user["username"]) if user else "未知用户"
+    recall_text = f"{my_name} 撤回了一条消息"
+    db_execute("UPDATE direct_messages SET body = ?, msg_type = 'recall' WHERE id = ?", (recall_text, msg_id))
     return jsonify({"status": "ok"})
 
 @app.route("/v1/groups/unread", methods=["GET", "POST"])
@@ -1930,6 +1971,10 @@ def download_file():
 def serve_media(filename):
     return send_from_directory(MEDIA_DIR, filename)
 
+@app.route("/uploads/<path:filename>", methods=["GET"])
+def serve_uploads(filename):
+    return send_from_directory(UPLOAD_DIR, filename)
+
 # =========================================================================
 #  Update check
 # =========================================================================
@@ -1954,25 +1999,7 @@ def update_check():
 
 @app.route("/", methods=["GET"])
 def root():
-    return jsonify({
-        "service": APP_NAME,
-        "version": APP_VERSION,
-        "status": "ok",
-        "endpoints": {
-            "auth": ["/v1/auth/handshake", "/v1/auth/login", "/v1/auth/register", "/v1/auth/refresh"],
-            "user": ["/v1/me", "/v1/me/profile", "/v1/users/profile"],
-            "friends": ["/v1/friends", "/v1/friends/request", "/v1/friends/requests", "/v1/friends/respond"],
-            "groups": ["/v1/groups/list", "/v1/groups/create", "/v1/groups/join", "/v1/groups/leave",
-                       "/v1/groups/members", "/v1/groups/typing"],
-            "direct": ["/v1/direct/messages/v2", "/v1/direct/send", "/v1/direct/read", "/v1/direct/unread"],
-            "group_messages": ["/v1/groups/messages/v2", "/v1/groups/message/send", "/v1/groups/read", "/v1/groups/unread"],
-            "notifications": ["/v1/notifications"],
-            "moments": ["/v1/moments", "/v1/moments/user", "/v1/moments/timeline",
-                        "/v1/moments/like", "/v1/moments/unlike", "/v1/moments/comments"],
-            "media": ["/v1/media", "/v1/files/upload", "/v1/files/download", "/media/<filename>"],
-            "ws": "/v1/ws?token=<access_token>&sid=<session_id>",
-        },
-    })
+    return """<!DOCTYPE html><html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>旧聊 Rh · OldChat-Rhodium-Neo</title><link rel="icon" href="/uploads/oldchat_logo.png" type="image/jpeg"><style>*{margin:0;padding:0}html,body{width:100%;min-height:100%;font-family:"Droid Sans",Arial,Helvetica,sans-serif;background:#e8ecf0;color:#2c3e50;font-size:15px;line-height:1.6;-webkit-text-size-adjust:100%;text-size-adjust:100%}.navbar{width:100%;background:#1a2332;padding:12px 20px;overflow:hidden;zoom:1}.navbar-inner{max-width:960px;margin:0 auto;text-align:left}.navbar-icon{float:left;width:30px;height:30px;margin-right:8px;border:0}.navbar-brand{float:left;color:#fff;font-size:18px;font-weight:bold;letter-spacing:0.5px;line-height:30px}.main-wrapper{width:100%;text-align:center;padding:40px 10px 50px 10px}.main-card{display:inline-block;zoom:1;*display:inline;width:auto;max-width:100%;background:#fff;border:2px solid #ccd5dc;padding:20px;text-align:center;-webkit-box-shadow:0 2px 0 #bcc4cb;box-shadow:0 2px 0 #bcc4cb;margin:0 auto}.card-inner{max-width:520px;margin:0 auto;text-align:center}.logo-img{display:block;width:120px;height:120px;margin:0 auto 18px auto;border:2px solid #dde3e8}.title{font-size:26px;font-weight:bold;color:#1a2332;margin-bottom:6px;letter-spacing:0.3px}.subtitle{font-size:13px;color:#6b7d8e;margin-bottom:16px;letter-spacing:0.5px}.tagline{font-size:15px;color:#3a4f63;margin-bottom:8px;font-weight:bold}.desc{font-size:13.5px;color:#556c7e;margin-bottom:24px;line-height:1.7}.btn-row{text-align:center;margin-bottom:6px}.btn{display:block;width:auto;max-width:260px;margin:6px auto;padding:11px 28px;font-size:14px;font-weight:bold;text-decoration:none;letter-spacing:0.4px;cursor:pointer;border:2px solid #2c3e50;background:#2c3e50;color:#fff;text-align:center;font-family:"Droid Sans",Arial,Helvetica,sans-serif}.btn:hover{background:#fff;color:#2c3e50;border-color:#2c3e50}.btn-primary{background:#3498db;border-color:#3498db;color:#fff}.btn-primary:hover{background:#fff;color:#3498db;border-color:#3498db}.btn-outline{background:#fff;color:#2c3e50;border-color:#2c3e50}.btn-outline:hover{background:#2c3e50;color:#fff}.footer{width:100%;text-align:center;padding:16px 10px 24px 10px;font-size:12px;color:#8a9aaa;letter-spacing:0.3px}.footer a{color:#5a7d9a;text-decoration:none}.footer a:hover{text-decoration:underline}@media screen and (min-width:600px){.btn{display:inline-block;width:auto;margin:5px 7px}.btn-row{text-align:center}}</style></head><body><div class="navbar"><div class="navbar-inner"><img class="navbar-icon" src="/uploads/oldchat_logo.png" alt="ORN" width="30" height="30" onerror="this.style.display='none'"><span class="navbar-brand">旧聊 Rh · OldChat-Rhodium-Neo</span></div></div><div class="main-wrapper"><div class="main-card"><div class="card-inner"><img class="logo-img" src="/uploads/oldchat_logo.png" alt="OldChat Logo" width="120" height="120" onerror="this.style.border='2px dashed #ccd5dc';this.style.background='#f7f9fb';"><div class="title">旧聊 Rh</div><div class="subtitle">OldChat-Rhodium-Neo (ORN)</div><div class="tagline">蓝旧聊已死...但真的死了吗？让我们复活它！</div><div class="desc">这是一个使用 Python 编写的开源项目，<br>强兼容旧聊，并且拥有功能完善的网页端界面。</div><div class="btn-row"><a class="btn btn-outline" href="https://github.com/LGCR837/oldchat-rhodium-neo" target="_blank" rel="noopener noreferrer">仓库地址</a><a class="btn btn-outline" href="/uploads/OldChatRhodiumNeoClient202606271958v65.apk">安卓客户端</a><a class="btn btn-primary" href="/web/">立即使用</a></div></div></div></div><div class="footer">Powered by <a href="https://crweb.ccwu.cc/" target="_blank" rel="noopener noreferrer">LGCR837</a> &nbsp;·&nbsp; OldChat-Rhodium-Neo</div></body></html>"""
 
 # =========================================================================
 #  WebSocket handler (/v1/ws)

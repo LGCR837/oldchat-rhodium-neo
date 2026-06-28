@@ -665,6 +665,15 @@ document.addEventListener('DOMContentLoaded', () => {
             return div;
         }
 
+        if (msgType === 'recall') {
+            const div = document.createElement('div');
+            div.className = 'time-separator';
+            div.textContent = msg.body || '[消息已撤回]';
+            div.dataset.msgId = msg.id;
+            div.dataset.msgType = 'recall';
+            return div;
+        }
+
         const isSelfByUid = fromUid && myUid && fromUid.toUpperCase() === myUid.toUpperCase();
         const isSelfByFlag = msg.is_me === true || msg.isSelf === true;
         const isSelf = isSelfByUid || isSelfByFlag;
@@ -1539,17 +1548,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const fromUid = msgDiv.dataset.fromUid;
             const isOwn = fromUid && fromUid.toUpperCase() === myUid.toUpperCase();
+            const rawBody = JSON.parse(msgDiv.dataset.rawBody || '{}');
+            const msgTime = rawBody.created_at || 0;
+            const canRecall = isOwn && msgTime && (Date.now() / 1000 - msgTime) <= 120;
 
             const menu = document.createElement('div');
             menu.className = 'custom-context-menu';
             menu.style.left = e.clientX + 'px';
             menu.style.top = e.clientY + 'px';
+
             let menuHtml = `
                 <div class="context-menu-item" data-action="copy">复制</div>
                 <div class="context-menu-item" data-action="copy-raw">复制原始消息</div>
                 <div class="context-menu-divider"></div>
                 <div class="context-menu-item" data-action="quote">引用</div>
             `;
+            if (canRecall) {
+                menuHtml += `<div class="context-menu-item" data-action="recall" style="color:#ff6b6b;">撤回</div>`;
+            }
             menu.innerHTML = menuHtml;
             document.body.appendChild(menu);
             requestAnimationFrame(() => menu.classList.add('show'));
@@ -1589,6 +1605,27 @@ document.addEventListener('DOMContentLoaded', () => {
                     quotePreviewText.textContent = `引用: ${fromName} - ${plainText.substring(0, 50)}`;
                     quotePreview.style.display = 'flex';
                     messageInput.focus();
+                } else if (action === 'recall') {
+                    if (!currentConv) return;
+                    fetch('/web/api/recall', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            msg_id: msgId,
+                            type: currentConv.type,
+                            target_id: currentConv.id
+                        })
+                    }).then(r => r.json()).then(d => {
+                        if (d.success) {
+                            const recallText = d.recall_text || '[消息已撤回]';
+                            const timeSep = document.createElement('div');
+                            timeSep.className = 'time-separator';
+                            timeSep.textContent = recallText;
+                            msgDiv.replaceWith(timeSep);
+                        } else {
+                            alert(d.error || '撤回失败');
+                        }
+                    }).catch(() => alert('网络错误'));
                 }
                 hideContextMenu();
             });
