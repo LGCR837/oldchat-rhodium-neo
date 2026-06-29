@@ -2095,6 +2095,7 @@ if HAS_EVENTLET:
             while True:
                 msg = ws.wait()
                 if msg is None:
+                    log.info("[ws] user_id=%s 连接正常关闭（ws.wait() 返回 None）", user_id)
                     break
                 if not isinstance(msg, str):
                     continue
@@ -2106,31 +2107,37 @@ if HAS_EVENTLET:
                 if mtype == "ping":
                     try:
                         ws.send(json.dumps({"type": "pong", "ts": now_ts()}))
-                    except Exception:
+                    except Exception as e:
+                        log.warning("[ws] user_id=%s ping 响应失败: %s", user_id, e)
                         break
                 elif mtype == "keepalive":
                     pass
                 elif mtype == "echo":
                     try:
                         ws.send(msg)
-                    except Exception:
+                    except Exception as e:
+                        log.warning("[ws] user_id=%s echo 响应失败: %s", user_id, e)
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("[ws] user_id=%s 读循环异常断开: %s", user_id, e)
         finally:
             unregister_ws(user_id, ws)
+            log.info("[ws] user_id=%s 已注销（当前在线用户数=%d）", user_id, len(_ws_conns))
             # Notify friends offline
-            me3 = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (user_id,))
-            for f in friends:
-                push_to_user(f["id"], {
-                    "type": "presence",
-                    "data": {
-                        "uid": me3["uid"] if me3 else "",
-                        "display_name": (me3["display_name"] or me3["uid"]) if me3 else "",
-                        "avatar_url": me3["avatar_url"] or "" if me3 else "",
-                        "online": 0,
-                    },
-                })
+            try:
+                me3 = db_query_one("SELECT uid, display_name, avatar_url FROM users WHERE id = ?", (user_id,))
+                for f in friends:
+                    push_to_user(f["id"], {
+                        "type": "presence",
+                        "data": {
+                            "uid": me3["uid"] if me3 else "",
+                            "display_name": (me3["display_name"] or me3["uid"]) if me3 else "",
+                            "avatar_url": me3["avatar_url"] or "" if me3 else "",
+                            "online": 0,
+                        },
+                    })
+            except Exception:
+                pass
 
     # WSGI dispatch
     def dispatch(environ, start_response):
